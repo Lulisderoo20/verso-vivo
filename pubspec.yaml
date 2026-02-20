@@ -1,0 +1,45 @@
+﻿name: verso_vivo
+description: "VersoVivo: versiculo diario guiado por tu intencion"
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_tts: ^4.2.3
+  google_fonts: ^6.2.1
+  share_plus: ^10.1.4
+  speech_to_text: ^7.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/branding/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/branding/app_icon.png
+  adaptive_icon_background: "#0C1A22"
+  adaptive_icon_foreground: assets/branding/app_icon_foreground.png
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: assets/branding/app_icon.png
+    background_color: "#0C1A22"
+    theme_color: "#D8B46A"
+  windows:
+    generate: false
+  macos:
+    generate: false
+
