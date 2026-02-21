@@ -3,11 +3,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,11 +23,14 @@ class VersoVivoApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final baseTheme = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: const ColorScheme.dark(
-        primary: Color(0xFFD8B46A),
-        secondary: Color(0xFF67C7BB),
-        surface: Color(0xFF111A28),
+      brightness: Brightness.light,
+      colorScheme: const ColorScheme.light(
+        primary: Color(0xFF1B7F6D),
+        secondary: Color(0xFFB28A39),
+        surface: Color(0xFFFFF8EF),
+        onPrimary: Color(0xFFFFFFFF),
+        onSecondary: Color(0xFFFFFFFF),
+        onSurface: Color(0xFF1E2525),
       ),
     );
 
@@ -33,7 +38,7 @@ class VersoVivoApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'VersoVivo',
       theme: baseTheme.copyWith(
-        textTheme: GoogleFonts.plusJakartaSansTextTheme(baseTheme.textTheme),
+        textTheme: GoogleFonts.manropeTextTheme(baseTheme.textTheme),
         scaffoldBackgroundColor: Colors.transparent,
       ),
       home: const VerseHomePage(),
@@ -51,7 +56,7 @@ class VerseHomePage extends StatefulWidget {
 class _VerseHomePageState extends State<VerseHomePage> {
   static const String _appName = 'VersoVivo';
   static const String _question =
-      'Sobre que quieres que trate el versiculo de hoy?';
+      '¿Sobre qué quieres que trate el versículo de hoy?';
   static const String _webUrl = 'https://verso-vivo.pages.dev';
   static const String _androidUrl =
       'https://play.google.com/store/apps/details?id=com.usuario.verso_vivo';
@@ -63,7 +68,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
   final Random _random = Random();
 
   VerseCardData? _selectedVerse;
-  String _voiceStatus = 'Escribe o usa el microfono para contar tu tema.';
+  String _voiceStatus = 'Escribe o usa el micrófono para contar tu tema.';
   String _lastTopic = '';
   String? _spanishLocaleId;
   String _lastTranscript = '';
@@ -125,10 +130,10 @@ class _VerseHomePageState extends State<VerseHomePage> {
     setState(() {
       if (_speechEnabled) {
         _voiceStatus =
-            'Microfono listo. Habla o escribe y luego toca buscar.';
+            'Micrófono listo. Habla o escribe y luego toca buscar.';
       } else {
         _voiceStatus =
-            'Microfono no disponible aqui. Verifica permiso de microfono en Chrome.';
+            'Micrófono no disponible aquí. Verifica permiso de micrófono en Chrome.';
       }
     });
   }
@@ -145,7 +150,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
       }
       setState(() {
         _isListening = false;
-        _voiceStatus = 'Transcripcion lista. Toca buscar versiculo.';
+        _voiceStatus = 'Transcripción lista. Toca buscar versículo.';
       });
     }
   }
@@ -158,7 +163,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     setState(() {
       _isListening = false;
       _voiceStatus =
-          'No entendi el audio con claridad. Puedes intentar otra vez.';
+          'No entendí el audio con claridad. Puedes intentar otra vez.';
     });
   }
 
@@ -169,7 +174,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
     if (!_speechEnabled) {
       _showSnackBar(
-        'El reconocimiento de voz no esta disponible. Habilita el microfono en Chrome.',
+        'El reconocimiento de voz no está disponible. Habilita el micrófono en Chrome.',
       );
       return;
     }
@@ -215,7 +220,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
         TextPosition(offset: _topicController.text.length),
       );
       _voiceStatus = result.finalResult
-          ? 'Transcripcion lista. Toca buscar versiculo.'
+          ? 'Transcripción lista. Toca buscar versículo.'
           : 'Escuchando...';
     });
   }
@@ -227,7 +232,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
     final topic = _topicController.text.trim();
     if (topic.isEmpty) {
-      _showSnackBar('Primero escribe o dicta el tema del versiculo.');
+      _showSnackBar('Primero escribe o dicta el tema del versículo.');
       return;
     }
 
@@ -238,7 +243,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     });
 
     await _speak(
-      'Sobre $topic, este es tu versiculo de hoy. ${verse.text}. ${verse.reference}.',
+      'Sobre $topic, este es tu versículo de hoy. ${verse.text}. ${verse.reference}.',
     );
   }
 
@@ -249,7 +254,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     for (final verse in _verseCatalog) {
       var score = 0;
       for (final keyword in verse.keywords) {
-        if (normalizedTopic.contains(keyword)) {
+        if (normalizedTopic.contains(_normalize(keyword))) {
           score++;
         }
       }
@@ -287,7 +292,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
   Future<void> _speakSelectedVerse() async {
     final verse = _selectedVerse;
     if (verse == null) {
-      _showSnackBar('Aun no hay versiculo para leer.');
+      _showSnackBar('Aún no hay versículo para leer.');
       return;
     }
     await _speak('${verse.text}. ${verse.reference}.');
@@ -301,7 +306,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
       final hasSpanishVoice = await _ensureSpanishTtsVoice();
       if (!hasSpanishVoice) {
         _showSnackBar(
-          'No hay voz en espanol disponible en este navegador.',
+          'No hay voz en español disponible en este navegador.',
         );
         return;
       }
@@ -464,8 +469,8 @@ class _VerseHomePageState extends State<VerseHomePage> {
     setState(() {
       _isListening = false;
       _voiceStatus = discardResult
-          ? 'Microfono detenido.'
-          : 'Transcripcion lista. Toca buscar versiculo.';
+          ? 'Micrófono detenido.'
+          : 'Transcripción lista. Toca buscar versículo.';
     });
   }
 
@@ -500,12 +505,12 @@ class _VerseHomePageState extends State<VerseHomePage> {
   Future<void> _shareVerse() async {
     final verse = _selectedVerse;
     if (verse == null) {
-      _showSnackBar('Genera un versiculo antes de compartir.');
+      _showSnackBar('Genera un versículo antes de compartir.');
       return;
     }
 
     final message = [
-      'Mi versiculo de hoy en $_appName:',
+      'Mi versículo de hoy en $_appName:',
       '"${verse.text}"',
       verse.reference,
       '',
@@ -513,12 +518,12 @@ class _VerseHomePageState extends State<VerseHomePage> {
       'Comparte la app: $_webUrl',
     ].join('\n');
 
-    await Share.share(message, subject: 'Versiculo diario en $_appName');
+    await Share.share(message, subject: 'Versículo diario en $_appName');
   }
 
   Future<void> _shareApp() async {
     final message = [
-      'Estoy usando $_appName para recibir un versiculo diario segun mi tema.',
+      'Estoy usando $_appName para recibir un versículo diario según mi tema.',
       'Web: $_webUrl',
       'Android: $_androidUrl',
       'iPhone: $_iosUrl',
@@ -527,17 +532,94 @@ class _VerseHomePageState extends State<VerseHomePage> {
     await Share.share(message, subject: 'Te comparto $_appName');
   }
 
+  String _buildVerseShareText(VerseCardData verse) {
+    return [
+      'Mi versículo de hoy en $_appName:',
+      '"${verse.text}"',
+      verse.reference,
+      if (_lastTopic.isNotEmpty) 'Tema: $_lastTopic',
+      'Web: $_webUrl',
+    ].join('\n');
+  }
+
+  String _buildAppShareText() {
+    return [
+      'Estoy usando $_appName para recibir un versículo diario según mi tema.',
+      'Web: $_webUrl',
+      'Android: $_androidUrl',
+      'iPhone: $_iosUrl',
+    ].join('\n');
+  }
+
+  Future<void> _shareToSocialNetwork({
+    required _SocialNetwork network,
+    required bool shareVerse,
+  }) async {
+    final verse = _selectedVerse;
+    if (shareVerse && verse == null) {
+      _showSnackBar('Genera un versículo antes de compartir.');
+      return;
+    }
+
+    final text = shareVerse ? _buildVerseShareText(verse!) : _buildAppShareText();
+    final encodedText = Uri.encodeComponent(text);
+    final encodedUrl = Uri.encodeComponent(_webUrl);
+    final encodedImage = Uri.encodeComponent('$_webUrl/icons/Icon-512.png');
+
+    if (network == _SocialNetwork.instagram) {
+      await Share.share(
+        text,
+        subject: shareVerse ? 'Versículo diario en $_appName' : 'Te comparto $_appName',
+      );
+      _showSnackBar(
+        'Instagram se comparte desde la ventana nativa de compartir.',
+      );
+      return;
+    }
+
+    final uri = switch (network) {
+      _SocialNetwork.whatsapp =>
+        Uri.parse('https://api.whatsapp.com/send?text=$encodedText'),
+      _SocialNetwork.facebook => Uri.parse(
+        'https://www.facebook.com/sharer/sharer.php?u=$encodedUrl&quote=$encodedText',
+      ),
+      _SocialNetwork.x =>
+        Uri.parse('https://twitter.com/intent/tweet?text=$encodedText'),
+      _SocialNetwork.linkedin => Uri.parse(
+        'https://www.linkedin.com/sharing/share-offsite/?url=$encodedUrl',
+      ),
+      _SocialNetwork.pinterest => Uri.parse(
+        'https://pinterest.com/pin/create/button/?url=$encodedUrl&media=$encodedImage&description=$encodedText',
+      ),
+      _SocialNetwork.instagram => null,
+    };
+
+    if (uri == null) {
+      _showSnackBar('No pude generar el enlace de ${network.label}.');
+      return;
+    }
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.platformDefault,
+      webOnlyWindowName: '_blank',
+    );
+    if (!launched) {
+      _showSnackBar('No pude abrir ${network.label}.');
+    }
+  }
+
   Future<void> _copyVerse() async {
     final verse = _selectedVerse;
     if (verse == null) {
-      _showSnackBar('Aun no hay versiculo para copiar.');
+      _showSnackBar('Aún no hay versículo para copiar.');
       return;
     }
 
     await Clipboard.setData(
       ClipboardData(text: '${verse.text} (${verse.reference})'),
     );
-    _showSnackBar('Versiculo copiado al portapapeles.');
+    _showSnackBar('Versículo copiado al portapapeles.');
   }
 
   void _showSnackBar(String message) {
@@ -556,43 +638,50 @@ class _VerseHomePageState extends State<VerseHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: DecoratedBox(
+      body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF08131C),
-              Color(0xFF112236),
-              Color(0xFF1A3144),
+              Color(0xFFFFFAF2),
+              Color(0xFFF7EEDB),
+              Color(0xFFEAF5EF),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
-        child: SafeArea(
-          child: Stack(
-            children: [
-              Positioned(
-                top: -120,
-                left: -80,
-                child: _GlowOrb(
-                  diameter: 320,
-                  color: const Color(0xFF67C7BB).withOpacity(0.16),
-                ),
+        child: Stack(
+          children: [
+            const Positioned(
+              top: -120,
+              right: -80,
+              child: _AuroraBlob(
+                diameter: 360,
+                colors: [
+                  Color(0x66D6A23D),
+                  Color(0x33D6A23D),
+                  Color(0x00D6A23D),
+                ],
               ),
-              Positioned(
-                bottom: -160,
-                right: -90,
-                child: _GlowOrb(
-                  diameter: 380,
-                  color: const Color(0xFFD8B46A).withOpacity(0.18),
-                ),
+            ),
+            const Positioned(
+              bottom: -180,
+              left: -90,
+              child: _AuroraBlob(
+                diameter: 420,
+                colors: [
+                  Color(0x6684C9B4),
+                  Color(0x3384C9B4),
+                  Color(0x0084C9B4),
+                ],
               ),
-              Center(
-                child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            ),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 26),
+                child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1120),
+                    constraints: const BoxConstraints(maxWidth: 1180),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final isWide = constraints.maxWidth > 980;
@@ -601,7 +690,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(child: _buildInputPanel()),
-                              const SizedBox(width: 22),
+                              const SizedBox(width: 18),
                               Expanded(child: _buildVersePanel()),
                             ],
                           );
@@ -610,7 +699,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
                         return Column(
                           children: [
                             _buildInputPanel(),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 14),
                             _buildVersePanel(),
                           ],
                         );
@@ -619,118 +708,218 @@ class _VerseHomePageState extends State<VerseHomePage> {
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildInputPanel() {
-    return _GlassPanel(
+    final textStyle = GoogleFonts.manrope(
+      fontSize: 15,
+      height: 1.4,
+      fontWeight: FontWeight.w500,
+      color: const Color(0xFF334040),
+    );
+
+    return _SoftPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: const Color(0xFF1B7F6D).withOpacity(0.10),
+              border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.25)),
+            ),
+            child: Text(
+              'VersoVivo • Versículo diario',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                letterSpacing: 0.2,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF145F50),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
           Text(
             _appName,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 58,
+            style: GoogleFonts.playfairDisplay(
+              fontSize: 68,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFFF9F2DA),
-              height: 0.95,
+              color: const Color(0xFF163437),
+              height: 0.9,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
-            'Tu espacio diario para escuchar, leer y compartir Palabra.',
-            style: TextStyle(
-              fontSize: 15,
-              color: Colors.white.withOpacity(0.78),
-              height: 1.35,
-            ),
+            'Un espacio diario para respirar, escuchar y compartir un versículo con sentido.',
+            style: textStyle,
           ),
-          const SizedBox(height: 26),
+          const SizedBox(height: 24),
           Text(
             _question,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 35,
+            style: GoogleFonts.playfairDisplay(
+              fontSize: 36,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: const Color(0xFF102327),
               height: 1.0,
             ),
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _topicController,
-            maxLines: 3,
-            minLines: 2,
-            textInputAction: TextInputAction.done,
-            onChanged: _handleTopicChanged,
-            onSubmitted: (_) => _buildVerseForTopic(),
-            decoration: InputDecoration(
-              hintText: 'Ejemplo: ansiedad, trabajo, familia, paz, salud...',
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.55)),
-              filled: true,
-              fillColor: const Color(0xFF0B1722).withOpacity(0.7),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.14)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.14)),
-              ),
-              focusedBorder: const OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(18)),
-                borderSide: BorderSide(color: Color(0xFFD8B46A), width: 1.4),
-              ),
-            ),
-          ),
           const SizedBox(height: 14),
-          Text(
-            _voiceStatus,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withOpacity(0.72),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              color: const Color(0xFFFFFFFF).withOpacity(0.72),
+              border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.20)),
+            ),
+            child: TextField(
+              controller: _topicController,
+              maxLines: 3,
+              minLines: 2,
+              textInputAction: TextInputAction.done,
+              onChanged: _handleTopicChanged,
+              onSubmitted: (_) => _buildVerseForTopic(),
+              style: GoogleFonts.manrope(
+                fontSize: 16,
+                height: 1.3,
+                color: const Color(0xFF132023),
+              ),
+              decoration: InputDecoration(
+                hintText: 'Ejemplo: ansiedad, trabajo, familia, paz, salud...',
+                hintStyle: GoogleFonts.manrope(
+                  color: const Color(0xFF4D5A5B).withOpacity(0.72),
+                  fontSize: 15,
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+              ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: _isListening
+                  ? const Color(0xFFFFF3DE)
+                  : const Color(0xFFF3F7F4),
+              border: Border.all(
+                color: _isListening
+                    ? const Color(0xFFB28A39).withOpacity(0.35)
+                    : const Color(0xFF1B7F6D).withOpacity(0.2),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  _isListening ? Icons.graphic_eq : Icons.info_outline_rounded,
+                  size: 18,
+                  color: _isListening
+                      ? const Color(0xFF9A752F)
+                      : const Color(0xFF2D5D58),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _voiceStatus,
+                    style: GoogleFonts.manrope(
+                      fontSize: 13.5,
+                      height: 1.35,
+                      color: const Color(0xFF2A3838),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 9,
+            runSpacing: 9,
             children: [
-              FilledButton.icon(
+              FilledButton(
                 onPressed: _buildVerseForTopic,
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text('Buscar versiculo'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF1B7F6D),
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                child: const Text('Buscar versículo'),
               ),
               OutlinedButton.icon(
                 onPressed: _toggleListening,
                 icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
-                label: Text(_isListening ? 'Detener microfono' : 'Hablar'),
+                label: Text(_isListening ? 'Detener micrófono' : 'Hablar'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF1B4E58),
+                  side: BorderSide(color: const Color(0xFF1B4E58).withOpacity(0.35)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: _isSpeaking ? _stopSpeaking : _speakSelectedVerse,
                 icon: Icon(_isSpeaking ? Icons.stop_circle : Icons.volume_up),
                 label: Text(_isSpeaking ? 'Detener voz' : 'Escuchar'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF6D4F1E),
+                  side: BorderSide(color: const Color(0xFF6D4F1E).withOpacity(0.30)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 22),
           Text(
-            'Temas rapidos',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.78),
+            'Temas rápidos',
+            style: GoogleFonts.manrope(
+              color: const Color(0xFF2E3F42),
               fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: _quickTopics.map((topic) {
               return ActionChip(
                 label: Text(topic),
+                labelStyle: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF2A4447),
+                ),
+                side: BorderSide(color: const Color(0xFF1B7F6D).withOpacity(0.20)),
+                backgroundColor: const Color(0xFFFFFFFF).withOpacity(0.75),
                 onPressed: () {
                   _topicController.text = topic;
                   _topicController.selection = TextSelection.fromPosition(
@@ -746,9 +935,9 @@ class _VerseHomePageState extends State<VerseHomePage> {
   }
 
   Widget _buildVersePanel() {
-    return _GlassPanel(
+    return _SoftPanel(
       child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 380),
+        duration: const Duration(milliseconds: 420),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         child: _selectedVerse == null
@@ -765,28 +954,56 @@ class _VerseHomePageState extends State<VerseHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.menu_book_rounded,
-            size: 44,
-            color: const Color(0xFFD8B46A).withOpacity(0.95),
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF1B7F6D).withOpacity(0.14),
+              border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.24)),
+            ),
+            child: const Icon(
+              Icons.auto_stories_outlined,
+              size: 28,
+              color: Color(0xFF1B5E53),
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Text(
-            'Tu versiculo aparecera aqui',
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 34,
+            'Tu versículo aparecerá aquí',
+            style: GoogleFonts.playfairDisplay(
+              fontSize: 36,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: const Color(0xFF1A3338),
               height: 1.0,
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            'Escribe o dicta el tema y elige un versiculo de aproximadamente 30 palabras para hoy.',
-            style: TextStyle(
+            'Escribe o dicta el tema y elige un versículo de aproximadamente 30 palabras para hoy.',
+            style: GoogleFonts.manrope(
               fontSize: 15,
-              color: Colors.white.withOpacity(0.72),
+              color: const Color(0xFF3F4A4C),
               height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 22),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: const Color(0xFFFFFFFF).withOpacity(0.72),
+              border: Border.all(color: const Color(0xFF7AB7A8).withOpacity(0.28)),
+            ),
+            child: Text(
+              'Tip: usa el botón Hablar para dictar tu tema en español y toca Buscar versículo para generar el resultado.',
+              style: GoogleFonts.manrope(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                height: 1.4,
+                color: const Color(0xFF355052),
+              ),
             ),
           ),
         ],
@@ -802,59 +1019,176 @@ class _VerseHomePageState extends State<VerseHomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Versiculo de hoy',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.75),
+            'Versículo de hoy',
+            style: GoogleFonts.manrope(
+              color: const Color(0xFF2B4A4D),
               letterSpacing: 0.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '"${verse.text}"',
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 34,
-              height: 1.06,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFFF8F2DD),
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 12),
-          Text(
-            verse.reference,
-            style: TextStyle(
-              color: const Color(0xFF6DD4C3).withOpacity(0.95),
-              fontWeight: FontWeight.w600,
-              fontSize: 15,
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xFF1B7F6D),
+                  Color(0xFF226A78),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF214E56).withOpacity(0.22),
+                  blurRadius: 20,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '"${verse.text}"',
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 35,
+                    height: 1.08,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFFFFF6EB),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  verse.reference,
+                  style: GoogleFonts.manrope(
+                    color: const Color(0xFFE8F6F2),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14.5,
+                  ),
+                ),
+              ],
             ),
           ),
           if (_lastTopic.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               'Tema detectado: $_lastTopic',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.65),
-                fontSize: 13,
+              style: GoogleFonts.manrope(
+                color: const Color(0xFF385255),
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: _shareVerse,
-            icon: const Icon(Icons.ios_share_rounded),
-            label: const Text('Comparte este versiculo con tus amigos'),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 9,
+            runSpacing: 9,
+            children: [
+              FilledButton.icon(
+                onPressed: _shareVerse,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFB28A39),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.ios_share_rounded),
+                label: Text(
+                  'Comparte este versículo',
+                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _shareApp,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF1A5963),
+                  side: BorderSide(color: const Color(0xFF1A5963).withOpacity(0.32)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.send_rounded),
+                label: Text(
+                  'Comparte la app',
+                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _copyVerse,
+                icon: const Icon(Icons.copy_rounded),
+                label: Text(
+                  'Copiar',
+                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: _shareApp,
-            icon: const Icon(Icons.send_rounded),
-            label: const Text('Comparte la app con tus amig@s'),
+          const SizedBox(height: 16),
+          Text(
+            'Compartir versículo en',
+            style: GoogleFonts.manrope(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF4B5B5D),
+            ),
           ),
-          const SizedBox(height: 10),
-          TextButton.icon(
-            onPressed: _copyVerse,
-            icon: const Icon(Icons.copy_rounded),
-            label: const Text('Copiar versiculo'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _SocialNetwork.values
+                .map(
+                  (network) => _SocialShareChip(
+                    label: network.label,
+                    iconData: network.iconData,
+                    iconColor: network.iconColor,
+                    onPressed: () => _shareToSocialNetwork(
+                      network: network,
+                      shareVerse: true,
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Compartir app en',
+            style: GoogleFonts.manrope(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF4B5B5D),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _SocialNetwork.values
+                .map(
+                  (network) => _SocialShareChip(
+                    label: network.label,
+                    iconData: network.iconData,
+                    iconColor: network.iconColor,
+                    onPressed: () => _shareToSocialNetwork(
+                      network: network,
+                      shareVerse: false,
+                    ),
+                  ),
+                )
+                .toList(),
           ),
         ],
       ),
@@ -862,14 +1196,14 @@ class _VerseHomePageState extends State<VerseHomePage> {
   }
 }
 
-class _GlowOrb extends StatelessWidget {
-  const _GlowOrb({
+class _AuroraBlob extends StatelessWidget {
+  const _AuroraBlob({
     required this.diameter,
-    required this.color,
+    required this.colors,
   });
 
   final double diameter;
-  final Color color;
+  final List<Color> colors;
 
   @override
   Widget build(BuildContext context) {
@@ -878,23 +1212,23 @@ class _GlowOrb extends StatelessWidget {
       height: diameter,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: color,
+        gradient: RadialGradient(colors: colors),
       ),
     );
   }
 }
 
-class _GlassPanel extends StatelessWidget {
-  const _GlassPanel({required this.child});
+class _SoftPanel extends StatelessWidget {
+  const _SoftPanel({required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 550),
+      duration: const Duration(milliseconds: 620),
       curve: Curves.easeOutCubic,
-      tween: Tween(begin: 0.92, end: 1.0),
+      tween: Tween(begin: 0.94, end: 1.0),
       builder: (context, value, content) {
         return Transform.scale(
           scale: value,
@@ -906,20 +1240,77 @@ class _GlassPanel extends StatelessWidget {
       },
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(26),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
-          color: const Color(0xFF0D1A28).withOpacity(0.76),
-          border: Border.all(color: Colors.white.withOpacity(0.14)),
+          borderRadius: BorderRadius.circular(30),
+          color: const Color(0xFFFFFEFB).withOpacity(0.78),
+          border: Border.all(color: const Color(0xFFB9C9BE).withOpacity(0.38)),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF01050B).withOpacity(0.45),
-              blurRadius: 30,
+              color: const Color(0xFF9AAB9D).withOpacity(0.24),
+              blurRadius: 32,
               offset: const Offset(0, 18),
             ),
           ],
         ),
         child: child,
+      ),
+    );
+  }
+}
+
+enum _SocialNetwork {
+  whatsapp('WhatsApp', FontAwesomeIcons.whatsapp, Color(0xFF25D366)),
+  instagram('Instagram', FontAwesomeIcons.instagram, Color(0xFFE4405F)),
+  facebook('Facebook', FontAwesomeIcons.facebookF, Color(0xFF1877F2)),
+  x('X', FontAwesomeIcons.xTwitter, Color(0xFF111111)),
+  linkedin('LinkedIn', FontAwesomeIcons.linkedinIn, Color(0xFF0A66C2)),
+  pinterest('Pinterest', FontAwesomeIcons.pinterestP, Color(0xFFE60023));
+
+  const _SocialNetwork(this.label, this.iconData, this.iconColor);
+  final String label;
+  final IconData iconData;
+  final Color iconColor;
+}
+
+class _SocialShareChip extends StatelessWidget {
+  const _SocialShareChip({
+    required this.label,
+    required this.iconData,
+    required this.iconColor,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData iconData;
+  final Color iconColor;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        foregroundColor: const Color(0xFF29484A),
+        side: BorderSide(color: const Color(0xFF29484A).withOpacity(0.25)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FaIcon(iconData, size: 14, color: iconColor),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -941,7 +1332,7 @@ const List<String> _quickTopics = [
   'ansiedad',
   'fortaleza',
   'familia',
-  'direccion',
+  'dirección',
   'duelo',
   'gratitud',
   'trabajo',
@@ -952,23 +1343,23 @@ const List<VerseCardData> _verseCatalog = [
   VerseCardData(
     reference: 'Salmo 23:1-3',
     text:
-        'El Senor es mi pastor; nada me faltara. En verdes pastos me hace descansar, junto a aguas tranquilas me conduce y reconforta mi alma para seguir adelante.',
-    keywords: ['ansiedad', 'descanso', 'paz', 'agotado', 'cansado', 'estres'],
+        'El Señor es mi pastor; nada me faltará. En verdes pastos me hace descansar, junto a aguas tranquilas me conduce y reconforta mi alma para seguir adelante.',
+    keywords: ['ansiedad', 'descanso', 'paz', 'agotado', 'cansado', 'estrés'],
   ),
   VerseCardData(
     reference: 'Salmo 34:18',
     text:
-        'Cercano esta el Senor a los quebrantados de corazon, y salva a los de espiritu abatido cuando sienten que ya no tienen fuerzas para continuar.',
-    keywords: ['duelo', 'tristeza', 'dolor', 'perdida', 'depresion', 'soledad'],
+        'Cercano está el Señor a los quebrantados de corazón, y salva a los de espíritu abatido cuando sienten que ya no tienen fuerzas para continuar.',
+    keywords: ['duelo', 'tristeza', 'dolor', 'pérdida', 'depresión', 'soledad'],
   ),
   VerseCardData(
     reference: 'Filipenses 4:6-7',
     text:
-        'No se inquieten por nada; presenten sus peticiones a Dios con oracion y gratitud, y su paz guardara su mente y su corazon en Cristo Jesus.',
-    keywords: ['ansiedad', 'miedo', 'preocupacion', 'panico', 'calma'],
+        'No se inquieten por nada; presenten sus peticiones a Dios con oración y gratitud, y su paz guardará su mente y su corazón en Cristo Jesús.',
+    keywords: ['ansiedad', 'miedo', 'preocupación', 'pánico', 'calma'],
   ),
   VerseCardData(
-    reference: 'Isaias 41:10',
+    reference: 'Isaías 41:10',
     text:
         'No temas, porque yo estoy contigo; no desmayes, porque yo soy tu Dios que te fortalece, te ayuda y te sostiene con mi mano firme y fiel.',
     keywords: ['fortaleza', 'miedo', 'trabajo', 'incertidumbre', 'inseguridad'],
@@ -976,44 +1367,44 @@ const List<VerseCardData> _verseCatalog = [
   VerseCardData(
     reference: 'Salmo 121:1-2',
     text:
-        'Alzo mis ojos a los montes: de donde vendra mi ayuda? Mi ayuda viene del Senor, creador del cielo y de la tierra, hoy y siempre.',
-    keywords: ['ayuda', 'direccion', 'decisiones', 'guia', 'rumbo'],
+        'Alzo mis ojos a los montes: ¿de dónde vendrá mi ayuda? Mi ayuda viene del Señor, creador del cielo y de la tierra, hoy y siempre.',
+    keywords: ['ayuda', 'dirección', 'decisiones', 'guía', 'rumbo'],
   ),
   VerseCardData(
     reference: 'Proverbios 3:5-6',
     text:
-        'Confia en el Senor con todo tu corazon y no te apoyes en tu propia prudencia; reconocelo en tus caminos y el enderezara tus sendas.',
-    keywords: ['direccion', 'decisiones', 'futuro', 'trabajo', 'proyecto'],
+        'Confía en el Señor con todo tu corazón y no te apoyes en tu propia prudencia; reconócelo en tus caminos y él enderezará tus sendas.',
+    keywords: ['dirección', 'decisiones', 'futuro', 'trabajo', 'proyecto'],
   ),
   VerseCardData(
     reference: 'Mateo 11:28',
     text:
-        'Vengan a mi todos los que estan cansados y cargados, y yo les dare descanso; en mi hallaran alivio para el alma en medio del peso diario.',
-    keywords: ['cansancio', 'agotado', 'estres', 'descanso', 'sobrecarga'],
+        'Vengan a mí todos los que están cansados y cargados, y yo les daré descanso; en mí hallarán alivio para el alma en medio del peso diario.',
+    keywords: ['cansancio', 'agotado', 'estrés', 'descanso', 'sobrecarga'],
   ),
   VerseCardData(
-    reference: 'Josue 1:9',
+    reference: 'Josué 1:9',
     text:
-        'Se fuerte y valiente; no temas ni desmayes, porque el Senor tu Dios estara contigo dondequiera que vayas y en cada paso de tu camino.',
-    keywords: ['fortaleza', 'valentia', 'empezar', 'nuevo', 'retos', 'miedo'],
+        'Sé fuerte y valiente; no temas ni desmayes, porque el Señor tu Dios estará contigo dondequiera que vayas y en cada paso de tu camino.',
+    keywords: ['fortaleza', 'valentía', 'empezar', 'nuevo', 'retos', 'miedo'],
   ),
   VerseCardData(
     reference: 'Romanos 8:28',
     text:
-        'Sabemos que Dios dispone todas las cosas para bien de quienes le aman, aun cuando hoy no entiendan el proceso completo que estan viviendo.',
-    keywords: ['esperanza', 'proceso', 'frustracion', 'duelo', 'crisis'],
+        'Sabemos que Dios dispone todas las cosas para bien de quienes le aman, aun cuando hoy no entiendan el proceso completo que están viviendo.',
+    keywords: ['esperanza', 'proceso', 'frustración', 'duelo', 'crisis'],
   ),
   VerseCardData(
     reference: 'Salmo 127:1',
     text:
-        'Si el Senor no edifica la casa, en vano trabajan los que la construyen; encomienda tu proyecto y tu familia para que tenga fundamento firme.',
+        'Si el Señor no edifica la casa, en vano trabajan los que la construyen; encomienda tu proyecto y tu familia para que tenga fundamento firme.',
     keywords: ['familia', 'hogar', 'trabajo', 'negocio', 'proyecto'],
   ),
   VerseCardData(
     reference: 'Salmo 100:4',
     text:
-        'Entren por sus puertas con accion de gracias y por sus atrios con alabanza; denle gracias y bendigan su nombre por cada detalle recibido.',
-    keywords: ['gratitud', 'agradecimiento', 'alegria', 'gozo'],
+        'Entren por sus puertas con acción de gracias y por sus atrios con alabanza; denle gracias y bendigan su nombre por cada detalle recibido.',
+    keywords: ['gratitud', 'agradecimiento', 'alegría', 'gozo'],
   ),
   VerseCardData(
     reference: 'Salmo 46:1',
