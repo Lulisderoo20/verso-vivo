@@ -1,10 +1,14 @@
 ﻿import 'dart:math';
 
+import 'dart:convert';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
@@ -68,6 +72,8 @@ class _VerseHomePageState extends State<VerseHomePage> {
   static const String _androidUrl =
       'https://play.google.com/store/apps/details?id=com.usuario.verso_vivo';
   static const String _iosUrl = 'https://apps.apple.com/app/id0000000000';
+  static const String _bibleApiBaseUrl =
+      'https://raw.githubusercontent.com/maatheusgois/bible/main/versions/es/rvr';
 
   final TextEditingController _topicController = TextEditingController();
   final SpeechToText _speechToText = SpeechToText();
@@ -244,10 +250,27 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
-    final verse = _pickVerse(topic);
+    final parsedReference = _parseBibleReference(topic);
+    VerseCardData? verseFromReference;
+    if (parsedReference != null) {
+      if (mounted) {
+        setState(() {
+          _voiceStatus = 'Buscando referencia bíblica...';
+        });
+      }
+      verseFromReference = await _fetchVerseFromBibleApi(parsedReference);
+      if (verseFromReference == null) {
+        _showSnackBar(
+          'No encontré esa referencia exacta. Te muestro un versículo relacionado.',
+        );
+      }
+    }
+
+    final verse = verseFromReference ?? _pickVerse(topic);
     setState(() {
       _selectedVerse = verse;
       _lastTopic = topic;
+      _voiceStatus = 'Versículo listo. Puedes leerlo o compartirlo.';
     });
 
     await _speak(
@@ -256,6 +279,11 @@ class _VerseHomePageState extends State<VerseHomePage> {
   }
 
   VerseCardData _pickVerse(String topic) {
+    final verseByReference = _pickVerseByReference(topic);
+    if (verseByReference != null) {
+      return verseByReference;
+    }
+
     final normalizedTopic = _normalize(topic);
     final scoredMatches = <MapEntry<VerseCardData, int>>[];
 
@@ -282,6 +310,328 @@ class _VerseHomePageState extends State<VerseHomePage> {
     }
 
     return _verseCatalog[_random.nextInt(_verseCatalog.length)];
+  }
+
+  _BibleParsedReference? _parseBibleReference(String input) {
+    var normalized = _normalizeReferenceInput(input);
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    normalized = normalized
+        .replaceAll(
+          RegExp(r'\b(primera|primer|1ra|1er|i)\b'),
+          '1',
+        )
+        .replaceAll(
+          RegExp(r'\b(segunda|segundo|2da|2do|ii)\b'),
+          '2',
+        )
+        .replaceAll(
+          RegExp(r'\b(tercera|tercer|3ra|3er|iii)\b'),
+          '3',
+        );
+    normalized = normalized.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    _BibleBookDefinition? matchedBook;
+    String matchedAlias = '';
+
+    for (final book in _bibleBooks) {
+      for (final alias in book.aliases) {
+        final pattern = RegExp(
+          r'(^|\s)' + RegExp.escape(alias) + r'(?=\s|$)',
+        );
+        if (pattern.hasMatch(normalized) && alias.length > matchedAlias.length) {
+          matchedBook = book;
+          matchedAlias = alias;
+        }
+      }
+    }
+
+    if (matchedBook == null) {
+      return null;
+    }
+
+    final numbersSource = normalized
+        .replaceFirst(
+          RegExp(r'(^|\s)' + RegExp.escape(matchedAlias) + r'(?=\s|$)'),
+          ' ',
+        )
+        .replaceAll(
+          RegExp(
+            r'\b(de|del|la|el|los|las|libro|carta|epistola|evangelio|segun|san|santo)\b',
+          ),
+          ' ',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    int? chapter;
+    int? verseStart;
+    int? verseEnd;
+
+    final chapterVerseMatch = RegExp(
+      r'(\d{1,3})\s*:\s*(\d{1,3})(?:\s*-\s*(\d{1,3}))?',
+    ).firstMatch(numbersSource);
+    if (chapterVerseMatch != null) {
+      chapter = int.tryParse(chapterVerseMatch.group(1)!);
+      verseStart = int.tryParse(chapterVerseMatch.group(2)!);
+      verseEnd = int.tryParse(chapterVerseMatch.group(3) ?? '');
+    } else {
+      final matches = RegExp(
+        r'\d{1,3}',
+      ).allMatches(numbersSource).map((m) => int.parse(m.group(0)!)).toList();
+      if (matches.isNotEmpty) {
+        chapter = matches[0];
+      }
+      if (matches.length >= 2) {
+        verseStart = matches[1];
+      }
+      if (matches.length >= 3) {
+        verseEnd = matches[2];
+      }
+    }
+
+    chapter ??= 1;
+    if (chapter < 1) {
+      return null;
+    }
+
+    if (verseStart != null && verseStart < 1) {
+      verseStart = 1;
+    }
+    if (verseEnd != null && verseEnd < 1) {
+      verseEnd = verseStart;
+    }
+
+    return _BibleParsedReference(
+      bookId: matchedBook.id,
+      bookName: matchedBook.name,
+      chapter: chapter,
+      verseStart: verseStart,
+      verseEnd: verseEnd,
+    );
+  }
+
+  Future<VerseCardData?> _fetchVerseFromBibleApi(
+    _BibleParsedReference reference,
+  ) async {
+    final chapter = reference.chapter ?? 1;
+    final verses = <String>[];
+    var startVerse = reference.verseStart;
+    var endVerse = reference.verseEnd;
+
+    if (startVerse != null) {
+      endVerse ??= startVerse;
+      if (endVerse < startVerse) {
+        endVerse = startVerse;
+      }
+      const maxRange = 8;
+      if (endVerse - startVerse + 1 > maxRange) {
+        endVerse = startVerse + maxRange - 1;
+      }
+
+      var lastFetchedVerse = startVerse;
+      for (var verse = startVerse; verse <= endVerse; verse++) {
+        final text = await _fetchBibleVerseText(reference.bookId, chapter, verse);
+        if (text == null) {
+          if (verse == startVerse) {
+            return null;
+          }
+          break;
+        }
+        verses.add(text);
+        lastFetchedVerse = verse;
+      }
+
+      if (verses.isEmpty) {
+        return null;
+      }
+
+      final verseSuffix = lastFetchedVerse == startVerse
+          ? '$chapter:$startVerse'
+          : '$chapter:$startVerse-$lastFetchedVerse';
+
+      return VerseCardData(
+        reference: '${reference.bookName} $verseSuffix',
+        text: verses.join(' '),
+        keywords: [reference.bookName.toLowerCase()],
+      );
+    }
+
+    const previewVerses = 5;
+    var lastFetchedVerse = 0;
+    for (var verse = 1; verse <= previewVerses; verse++) {
+      final text = await _fetchBibleVerseText(reference.bookId, chapter, verse);
+      if (text == null) {
+        break;
+      }
+      verses.add('$verse. $text');
+      lastFetchedVerse = verse;
+    }
+
+    if (verses.isEmpty) {
+      return null;
+    }
+
+    return VerseCardData(
+      reference: '${reference.bookName} $chapter:1-$lastFetchedVerse',
+      text: verses.join(' '),
+      keywords: [reference.bookName.toLowerCase()],
+    );
+  }
+
+  Future<String?> _fetchBibleVerseText(String bookId, int chapter, int verse) async {
+    final uri = Uri.parse('$_bibleApiBaseUrl/$bookId/$chapter/$verse.json');
+    try {
+      final response = await http
+          .get(uri, headers: const {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is String) {
+        final clean = decoded.replaceAll(RegExp(r'\s+'), ' ').trim();
+        return clean.isEmpty ? null : clean;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  String _normalizeReferenceInput(String value) {
+    const source = 'áéíóúüñ';
+    const target = 'aeiouun';
+
+    var output = value.toLowerCase();
+    for (var i = 0; i < source.length; i++) {
+      output = output.replaceAll(source[i], target[i]);
+    }
+
+    output = output.replaceAll(RegExp(r'[^a-z0-9:\-\s]'), ' ');
+    return output.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  VerseCardData? _pickVerseByReference(String topic) {
+    final normalizedTopic = _normalize(topic);
+
+    final salmoMatch = RegExp(r'\bsalmo?s?\s+(\d{1,3})\b').firstMatch(
+      normalizedTopic,
+    );
+    if (salmoMatch != null) {
+      final chapter = int.tryParse(salmoMatch.group(1)!);
+      if (chapter != null) {
+        return _findVerseByBookAndChapter(
+          bookQuery: 'salmo',
+          chapter: chapter,
+        );
+      }
+    }
+
+    final corintiosMatch = RegExp(
+      r'\b(?:([12])\s+)?corint(?:ios|os)\s+(\d{1,3})\b',
+    ).firstMatch(normalizedTopic);
+    if (corintiosMatch != null) {
+      final prefix = corintiosMatch.group(1);
+      final chapter = int.tryParse(corintiosMatch.group(2)!);
+      if (chapter == null) {
+        return null;
+      }
+      if (prefix != null) {
+        return _findVerseByBookAndChapter(
+          bookQuery: '$prefix corintios',
+          chapter: chapter,
+        );
+      }
+      return _findVerseByBookAndChapter(bookQuery: '1 corintios', chapter: chapter) ??
+          _findVerseByBookAndChapter(bookQuery: '2 corintios', chapter: chapter) ??
+          _findVerseByBookAndChapter(bookQuery: 'corintios', chapter: chapter);
+    }
+
+    final genericReferenceMatch = RegExp(r'^([a-z]+)\s+(\d{1,3})\b').firstMatch(
+      normalizedTopic,
+    );
+    if (genericReferenceMatch != null) {
+      final chapter = int.tryParse(genericReferenceMatch.group(2)!);
+      if (chapter != null) {
+        return _findVerseByBookAndChapter(
+          bookQuery: genericReferenceMatch.group(1)!,
+          chapter: chapter,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  VerseCardData? _findVerseByBookAndChapter({
+    required String bookQuery,
+    required int chapter,
+  }) {
+    final normalizedBookQuery = _normalize(bookQuery);
+    final matches = <VerseCardData>[];
+
+    for (final verse in _verseCatalog) {
+      final parsed = _extractBookAndChapter(verse.reference);
+      if (parsed == null || parsed.chapter != chapter) {
+        continue;
+      }
+
+      if (_matchesBookQuery(
+        queryBook: normalizedBookQuery,
+        referenceBook: parsed.book,
+      )) {
+        matches.add(verse);
+      }
+    }
+
+    if (matches.isEmpty) {
+      return null;
+    }
+    return matches[_random.nextInt(matches.length)];
+  }
+
+  ({String book, int chapter})? _extractBookAndChapter(String reference) {
+    final normalizedReference = _normalize(reference);
+    final match = RegExp(
+      r'^((?:1|2)\s+)?([a-z]+)\s+(\d{1,3})\b',
+    ).firstMatch(normalizedReference);
+    if (match == null) {
+      return null;
+    }
+
+    final chapter = int.tryParse(match.group(3)!);
+    if (chapter == null) {
+      return null;
+    }
+
+    final prefix = match.group(1)?.trim();
+    final baseBook = match.group(2)!;
+    final book = prefix == null ? baseBook : '$prefix $baseBook';
+    return (book: book, chapter: chapter);
+  }
+
+  bool _matchesBookQuery({
+    required String queryBook,
+    required String referenceBook,
+  }) {
+    if (queryBook == referenceBook) {
+      return true;
+    }
+
+    if (queryBook == 'salmos') {
+      return referenceBook == 'salmo';
+    }
+
+    if (queryBook == 'corintios' || queryBook == 'corintos') {
+      return referenceBook.contains('corintios') ||
+          referenceBook.contains('corintos');
+    }
+
+    return referenceBook.endsWith(' $queryBook');
   }
 
   String _normalize(String value) {
@@ -517,16 +867,30 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
-    final message = [
-      'Mi versículo de hoy en $_appName:',
-      '"${verse.text}"',
-      verse.reference,
-      '',
-      'Tema de hoy: $_lastTopic',
-      'Comparte la app: $_webUrl',
-    ].join('\n');
+    final message = _buildVerseShareText(verse);
+    try {
+      final imageBytes = await _buildVerseShareImageBytes(verse);
+      if (imageBytes == null || imageBytes.isEmpty) {
+        throw Exception('No se pudo generar la imagen del versículo.');
+      }
 
-    await Share.share(message, subject: 'Versículo diario en $_appName');
+      final imageFile = XFile.fromData(
+        imageBytes,
+        mimeType: 'image/png',
+        name: 'versiculo-versovivo.png',
+      );
+
+      await Share.shareXFiles(
+        [imageFile],
+        text: message,
+        subject: 'Versículo diario en $_appName',
+      );
+    } catch (_) {
+      await Share.share(message, subject: 'Versículo diario en $_appName');
+      _showSnackBar(
+        'Compartí en texto porque no se pudo generar la imagen en este dispositivo.',
+      );
+    }
   }
 
   Future<void> _shareApp() async {
@@ -557,6 +921,164 @@ class _VerseHomePageState extends State<VerseHomePage> {
       'Android: $_androidUrl',
       'iPhone: $_iosUrl',
     ].join('\n');
+  }
+
+  Future<Uint8List?> _buildVerseShareImageBytes(VerseCardData verse) async {
+    const imageWidth = 1080.0;
+    const imageHeight = 1350.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      const Rect.fromLTWH(0, 0, imageWidth, imageHeight),
+    );
+
+    final backgroundPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        const Offset(0, 0),
+        const Offset(imageWidth, imageHeight),
+        const [
+          Color(0xFF1B7F6D),
+          Color(0xFF226A78),
+          Color(0xFFB28A39),
+        ],
+        const [0.0, 0.68, 1.0],
+      );
+    canvas.drawRect(
+      const Rect.fromLTWH(0, 0, imageWidth, imageHeight),
+      backgroundPaint,
+    );
+
+    final glowPaint = Paint()..color = const Color(0x66FFFFFF);
+    canvas.drawCircle(const Offset(140, 120), 130, glowPaint);
+    canvas.drawCircle(
+      const Offset(920, 180),
+      170,
+      glowPaint..color = const Color(0x44FFF0D4),
+    );
+
+    final verseCardRect = RRect.fromRectAndRadius(
+      const Rect.fromLTWH(66, 238, 948, 760),
+      const Radius.circular(44),
+    );
+    canvas.drawRRect(
+      verseCardRect,
+      Paint()..color = const Color(0xF9FFF8EF),
+    );
+    canvas.drawRRect(
+      verseCardRect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = const Color(0x4D1B7F6D),
+    );
+
+    _paintShareText(
+      canvas: canvas,
+      text: _appName,
+      offset: const Offset(78, 70),
+      maxWidth: 924,
+      style: const TextStyle(
+        fontSize: 60,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFFFFF6EB),
+      ),
+    );
+    _paintShareText(
+      canvas: canvas,
+      text: 'Versículo de hoy',
+      offset: const Offset(82, 158),
+      maxWidth: 920,
+      style: const TextStyle(
+        fontSize: 36,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFFF0E9D9),
+      ),
+    );
+
+    _paintShareText(
+      canvas: canvas,
+      text: '"${verse.text}"',
+      offset: const Offset(120, 310),
+      maxWidth: 840,
+      style: const TextStyle(
+        fontSize: 54,
+        height: 1.2,
+        fontWeight: FontWeight.w600,
+        color: Color(0xFF183438),
+      ),
+      maxLines: 11,
+    );
+    _paintShareText(
+      canvas: canvas,
+      text: verse.reference,
+      offset: const Offset(120, 915),
+      maxWidth: 840,
+      style: const TextStyle(
+        fontSize: 34,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFF1B7F6D),
+      ),
+    );
+
+    if (_lastTopic.isNotEmpty) {
+      _paintShareText(
+        canvas: canvas,
+        text: 'Tema: $_lastTopic',
+        offset: const Offset(120, 965),
+        maxWidth: 840,
+        style: const TextStyle(
+          fontSize: 30,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF3A4C4E),
+        ),
+        maxLines: 2,
+      );
+    }
+
+    final footerRect = RRect.fromRectAndRadius(
+      const Rect.fromLTWH(66, 1060, 948, 220),
+      const Radius.circular(30),
+    );
+    canvas.drawRRect(
+      footerRect,
+      Paint()..color = const Color(0x26FFFFFF),
+    );
+    _paintShareText(
+      canvas: canvas,
+      text: 'Comparte la app: $_webUrl',
+      offset: const Offset(104, 1120),
+      maxWidth: 880,
+      style: const TextStyle(
+        fontSize: 28,
+        height: 1.3,
+        fontWeight: FontWeight.w600,
+        color: Color(0xFFFFF6EB),
+      ),
+      maxLines: 3,
+    );
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(imageWidth.toInt(), imageHeight.toInt());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    return byteData?.buffer.asUint8List();
+  }
+
+  void _paintShareText({
+    required Canvas canvas,
+    required String text,
+    required Offset offset,
+    required double maxWidth,
+    required TextStyle style,
+    int? maxLines,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: maxLines,
+      ellipsis: maxLines == null ? null : '…',
+    )..layout(maxWidth: maxWidth);
+    painter.paint(canvas, offset);
   }
 
   Future<void> _shareToSocialNetwork({
@@ -1406,6 +1928,483 @@ class VerseCardData {
   final List<String> keywords;
 }
 
+class _BibleParsedReference {
+  const _BibleParsedReference({
+    required this.bookId,
+    required this.bookName,
+    this.chapter,
+    this.verseStart,
+    this.verseEnd,
+  });
+
+  final String bookId;
+  final String bookName;
+  final int? chapter;
+  final int? verseStart;
+  final int? verseEnd;
+}
+
+class _BibleBookDefinition {
+  const _BibleBookDefinition({
+    required this.id,
+    required this.name,
+    required this.aliases,
+  });
+
+  final String id;
+  final String name;
+  final List<String> aliases;
+}
+
+const List<_BibleBookDefinition> _bibleBooks = [
+  _BibleBookDefinition(
+    id: 'gn',
+    name: 'Génesis',
+    aliases: ['genesis', 'gen'],
+  ),
+  _BibleBookDefinition(
+    id: 'ex',
+    name: 'Éxodo',
+    aliases: ['exodo', 'exo', 'ex'],
+  ),
+  _BibleBookDefinition(
+    id: 'lv',
+    name: 'Levítico',
+    aliases: ['levitico', 'levit', 'lev'],
+  ),
+  _BibleBookDefinition(
+    id: 'nm',
+    name: 'Números',
+    aliases: ['numeros', 'num'],
+  ),
+  _BibleBookDefinition(
+    id: 'dt',
+    name: 'Deuteronomio',
+    aliases: ['deuteronomio', 'deut', 'dt'],
+  ),
+  _BibleBookDefinition(
+    id: 'js',
+    name: 'Josué',
+    aliases: ['josue', 'jos'],
+  ),
+  _BibleBookDefinition(
+    id: 'jd',
+    name: 'Jueces',
+    aliases: ['jueces', 'juez'],
+  ),
+  _BibleBookDefinition(
+    id: 'rt',
+    name: 'Rut',
+    aliases: ['rut', 'rt'],
+  ),
+  _BibleBookDefinition(
+    id: '1sm',
+    name: '1 Samuel',
+    aliases: [
+      '1 samuel',
+      '1samuel',
+      'primer samuel',
+      'primera de samuel',
+      'primera samuel',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2sm',
+    name: '2 Samuel',
+    aliases: [
+      '2 samuel',
+      '2samuel',
+      'segundo samuel',
+      'segunda de samuel',
+      'segunda samuel',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '1kgs',
+    name: '1 Reyes',
+    aliases: [
+      '1 reyes',
+      '1reyes',
+      'primer reyes',
+      'primera de reyes',
+      'primera reyes',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2kgs',
+    name: '2 Reyes',
+    aliases: [
+      '2 reyes',
+      '2reyes',
+      'segundo reyes',
+      'segunda de reyes',
+      'segunda reyes',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '1ch',
+    name: '1 Crónicas',
+    aliases: [
+      '1 cronicas',
+      '1cronicas',
+      'primer cronicas',
+      'primera de cronicas',
+      'primera cronicas',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2ch',
+    name: '2 Crónicas',
+    aliases: [
+      '2 cronicas',
+      '2cronicas',
+      'segundo cronicas',
+      'segunda de cronicas',
+      'segunda cronicas',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: 'ezr',
+    name: 'Esdras',
+    aliases: ['esdras', 'ezr'],
+  ),
+  _BibleBookDefinition(
+    id: 'ne',
+    name: 'Nehemías',
+    aliases: ['nehemias', 'neh', 'ne'],
+  ),
+  _BibleBookDefinition(
+    id: 'et',
+    name: 'Ester',
+    aliases: ['ester', 'est'],
+  ),
+  _BibleBookDefinition(
+    id: 'job',
+    name: 'Job',
+    aliases: ['job'],
+  ),
+  _BibleBookDefinition(
+    id: 'ps',
+    name: 'Salmos',
+    aliases: ['salmo', 'salmos', 'ps'],
+  ),
+  _BibleBookDefinition(
+    id: 'prv',
+    name: 'Proverbios',
+    aliases: ['proverbios', 'proverbio', 'prov', 'prv'],
+  ),
+  _BibleBookDefinition(
+    id: 'ec',
+    name: 'Eclesiastés',
+    aliases: ['eclesiastes', 'ecle', 'ec'],
+  ),
+  _BibleBookDefinition(
+    id: 'so',
+    name: 'Cantares',
+    aliases: [
+      'cantares',
+      'cantar de los cantares',
+      'cantar',
+      'cantares de salomon',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: 'is',
+    name: 'Isaías',
+    aliases: ['isaias', 'isa'],
+  ),
+  _BibleBookDefinition(
+    id: 'jr',
+    name: 'Jeremías',
+    aliases: ['jeremias', 'jer'],
+  ),
+  _BibleBookDefinition(
+    id: 'lm',
+    name: 'Lamentaciones',
+    aliases: ['lamentaciones', 'lam'],
+  ),
+  _BibleBookDefinition(
+    id: 'ez',
+    name: 'Ezequiel',
+    aliases: ['ezequiel', 'eze'],
+  ),
+  _BibleBookDefinition(
+    id: 'dn',
+    name: 'Daniel',
+    aliases: ['daniel', 'dan', 'dn'],
+  ),
+  _BibleBookDefinition(
+    id: 'ho',
+    name: 'Oseas',
+    aliases: ['oseas', 'os'],
+  ),
+  _BibleBookDefinition(
+    id: 'jl',
+    name: 'Joel',
+    aliases: ['joel', 'jl'],
+  ),
+  _BibleBookDefinition(
+    id: 'am',
+    name: 'Amós',
+    aliases: ['amos', 'am'],
+  ),
+  _BibleBookDefinition(
+    id: 'ob',
+    name: 'Abdías',
+    aliases: ['abdias', 'abd', 'ob'],
+  ),
+  _BibleBookDefinition(
+    id: 'jn',
+    name: 'Jonás',
+    aliases: ['jonas', 'jon'],
+  ),
+  _BibleBookDefinition(
+    id: 'mi',
+    name: 'Miqueas',
+    aliases: ['miqueas', 'miq', 'mi'],
+  ),
+  _BibleBookDefinition(
+    id: 'na',
+    name: 'Nahum',
+    aliases: ['nahum', 'na'],
+  ),
+  _BibleBookDefinition(
+    id: 'hk',
+    name: 'Habacuc',
+    aliases: ['habacuc', 'hab', 'hk'],
+  ),
+  _BibleBookDefinition(
+    id: 'zp',
+    name: 'Sofonías',
+    aliases: ['sofonias', 'sof', 'zp'],
+  ),
+  _BibleBookDefinition(
+    id: 'hg',
+    name: 'Hageo',
+    aliases: ['hageo', 'hag', 'hg'],
+  ),
+  _BibleBookDefinition(
+    id: 'zc',
+    name: 'Zacarías',
+    aliases: ['zacarias', 'zac', 'zc'],
+  ),
+  _BibleBookDefinition(
+    id: 'ml',
+    name: 'Malaquías',
+    aliases: ['malaquias', 'mal', 'ml'],
+  ),
+  _BibleBookDefinition(
+    id: 'mt',
+    name: 'Mateo',
+    aliases: ['mateo', 'mat', 'mt'],
+  ),
+  _BibleBookDefinition(
+    id: 'mk',
+    name: 'Marcos',
+    aliases: ['marcos', 'mr', 'mk'],
+  ),
+  _BibleBookDefinition(
+    id: 'lk',
+    name: 'Lucas',
+    aliases: ['lucas', 'luc', 'lk'],
+  ),
+  _BibleBookDefinition(
+    id: 'jo',
+    name: 'Juan',
+    aliases: ['juan', 'san juan', 'evangelio de juan'],
+  ),
+  _BibleBookDefinition(
+    id: 'act',
+    name: 'Hechos',
+    aliases: ['hechos', 'hechos de los apostoles', 'act'],
+  ),
+  _BibleBookDefinition(
+    id: 'rm',
+    name: 'Romanos',
+    aliases: ['romanos', 'rom', 'rm'],
+  ),
+  _BibleBookDefinition(
+    id: '1co',
+    name: '1 Corintios',
+    aliases: [
+      '1 corintios',
+      '1corintios',
+      '1 corintos',
+      '1corintos',
+      'primer corintios',
+      'primera de corintios',
+      'primera corintios',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2co',
+    name: '2 Corintios',
+    aliases: [
+      '2 corintios',
+      '2corintios',
+      '2 corintos',
+      '2corintos',
+      'segundo corintios',
+      'segunda de corintios',
+      'segunda corintios',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: 'gl',
+    name: 'Gálatas',
+    aliases: ['galatas', 'gal', 'gl'],
+  ),
+  _BibleBookDefinition(
+    id: 'eph',
+    name: 'Efesios',
+    aliases: ['efesios', 'efe', 'eph'],
+  ),
+  _BibleBookDefinition(
+    id: 'ph',
+    name: 'Filipenses',
+    aliases: ['filipenses', 'fil', 'ph'],
+  ),
+  _BibleBookDefinition(
+    id: 'cl',
+    name: 'Colosenses',
+    aliases: ['colosenses', 'col', 'cl'],
+  ),
+  _BibleBookDefinition(
+    id: '1ts',
+    name: '1 Tesalonicenses',
+    aliases: [
+      '1 tesalonicenses',
+      '1tesalonicenses',
+      'primer tesalonicenses',
+      'primera de tesalonicenses',
+      'primera tesalonicenses',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2ts',
+    name: '2 Tesalonicenses',
+    aliases: [
+      '2 tesalonicenses',
+      '2tesalonicenses',
+      'segundo tesalonicenses',
+      'segunda de tesalonicenses',
+      'segunda tesalonicenses',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '1tm',
+    name: '1 Timoteo',
+    aliases: [
+      '1 timoteo',
+      '1timoteo',
+      'primer timoteo',
+      'primera de timoteo',
+      'primera timoteo',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2tm',
+    name: '2 Timoteo',
+    aliases: [
+      '2 timoteo',
+      '2timoteo',
+      'segundo timoteo',
+      'segunda de timoteo',
+      'segunda timoteo',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: 'tt',
+    name: 'Tito',
+    aliases: ['tito', 'tt'],
+  ),
+  _BibleBookDefinition(
+    id: 'phm',
+    name: 'Filemón',
+    aliases: ['filemon', 'flm', 'phm'],
+  ),
+  _BibleBookDefinition(
+    id: 'hb',
+    name: 'Hebreos',
+    aliases: ['hebreos', 'heb', 'hb'],
+  ),
+  _BibleBookDefinition(
+    id: 'jm',
+    name: 'Santiago',
+    aliases: ['santiago', 'stg', 'jm'],
+  ),
+  _BibleBookDefinition(
+    id: '1pe',
+    name: '1 Pedro',
+    aliases: [
+      '1 pedro',
+      '1pedro',
+      'primer pedro',
+      'primera de pedro',
+      'primera pedro',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2pe',
+    name: '2 Pedro',
+    aliases: [
+      '2 pedro',
+      '2pedro',
+      'segundo pedro',
+      'segunda de pedro',
+      'segunda pedro',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '1jo',
+    name: '1 Juan',
+    aliases: [
+      '1 juan',
+      '1juan',
+      'primer juan',
+      'primera de juan',
+      'primera juan',
+      'primera carta de juan',
+      'carta de juan',
+      'epistola de juan',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '2jo',
+    name: '2 Juan',
+    aliases: [
+      '2 juan',
+      '2juan',
+      'segundo juan',
+      'segunda de juan',
+      'segunda juan',
+      'segunda carta de juan',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: '3jo',
+    name: '3 Juan',
+    aliases: [
+      '3 juan',
+      '3juan',
+      'tercer juan',
+      'tercera de juan',
+      'tercera juan',
+      'tercera carta de juan',
+    ],
+  ),
+  _BibleBookDefinition(
+    id: 'jud',
+    name: 'Judas',
+    aliases: ['judas', 'jud'],
+  ),
+  _BibleBookDefinition(
+    id: 're',
+    name: 'Apocalipsis',
+    aliases: ['apocalipsis', 'revelacion', 'revelaciones', 're'],
+  ),
+];
+
 const List<String> _quickTopics = [
   'ansiedad',
   'fortaleza',
@@ -1423,6 +2422,12 @@ const List<VerseCardData> _verseCatalog = [
     text:
         'El Señor es mi pastor; nada me faltará. En verdes pastos me hace descansar, junto a aguas tranquilas me conduce y reconforta mi alma para seguir adelante.',
     keywords: ['ansiedad', 'descanso', 'paz', 'agotado', 'cansado', 'estrés'],
+  ),
+  VerseCardData(
+    reference: 'Salmo 1:1-3',
+    text:
+        'Bienaventurado quien se deleita en la ley del Señor y en ella medita de día y de noche; será como árbol plantado junto a corrientes de agua, que da fruto a su tiempo y su hoja no cae.',
+    keywords: ['salmo 1', 'meditar', 'firmeza', 'raices', 'fruto'],
   ),
   VerseCardData(
     reference: 'Salmo 34:18',
@@ -1471,6 +2476,12 @@ const List<VerseCardData> _verseCatalog = [
     text:
         'Sabemos que Dios dispone todas las cosas para bien de quienes le aman, aun cuando hoy no entiendan el proceso completo que están viviendo.',
     keywords: ['esperanza', 'proceso', 'frustración', 'duelo', 'crisis'],
+  ),
+  VerseCardData(
+    reference: '1 Corintios 3:16',
+    text:
+        '¿No saben que ustedes son templo de Dios y que el Espíritu de Dios habita en ustedes? Vivan recordando ese valor santo que Dios les dio.',
+    keywords: ['corintios 3', 'corintos 3', 'identidad', 'espiritu santo'],
   ),
   VerseCardData(
     reference: 'Salmo 127:1',
