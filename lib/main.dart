@@ -66,6 +66,9 @@ class _VerseHomePageState extends State<VerseHomePage> {
   String _voiceStatus = 'Escribe o usa el microfono para contar tu tema.';
   String _lastTopic = '';
   String? _spanishLocaleId;
+  String _lastTranscript = '';
+  bool _isStoppingListening = false;
+  bool _ttsReady = false;
   bool _speechEnabled = false;
   bool _isListening = false;
   bool _isSpeaking = false;
@@ -77,27 +80,11 @@ class _VerseHomePageState extends State<VerseHomePage> {
   }
 
   Future<void> _configureVoiceTools() async {
-    try {
-      _speechEnabled = await _speechToText.initialize(
-        onStatus: _handleSpeechStatus,
-        onError: _handleSpeechError,
-      );
-
-      final locales = await _speechToText.locales();
-      final spanishLocales = locales.where(
-        (locale) => locale.localeId.toLowerCase().startsWith('es'),
-      );
-
-      if (spanishLocales.isNotEmpty) {
-        _spanishLocaleId = spanishLocales.first.localeId;
-      }
-    } catch (_) {
-      _speechEnabled = false;
-    }
+    await _initializeSpeech();
 
     try {
       await _flutterTts.awaitSpeakCompletion(true);
-      await _flutterTts.setLanguage('es-ES');
+      await _ensureSpanishTtsVoice();
       await _flutterTts.setSpeechRate(0.48);
       await _flutterTts.setPitch(1.0);
       await _flutterTts.setVolume(1.0);
@@ -125,8 +112,10 @@ class _VerseHomePageState extends State<VerseHomePage> {
           _isSpeaking = false;
         });
       });
+      _ttsReady = true;
     } catch (_) {
       // If TTS is unavailable on a target platform, text mode still works.
+      _ttsReady = false;
     }
 
     if (!mounted) {
@@ -139,7 +128,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
             'Microfono listo. Habla o escribe y luego toca buscar.';
       } else {
         _voiceStatus =
-            'Microfono no disponible aqui. Puedes escribir tu tema.';
+            'Microfono no disponible aqui. Verifica permiso de microfono en Chrome.';
       }
     });
   }
@@ -150,6 +139,10 @@ class _VerseHomePageState extends State<VerseHomePage> {
     }
 
     if (status == 'done' || status == 'notListening') {
+      if (_isStoppingListening) {
+        _isStoppingListening = false;
+        return;
+      }
       setState(() {
         _isListening = false;
         _voiceStatus = 'Transcripcion lista. Toca buscar versiculo.';
@@ -171,26 +164,22 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
   Future<void> _toggleListening() async {
     if (!_speechEnabled) {
+      await _initializeSpeech();
+    }
+
+    if (!_speechEnabled) {
       _showSnackBar(
-        'El reconocimiento de voz no esta disponible en este dispositivo.',
+        'El reconocimiento de voz no esta disponible. Habilita el microfono en Chrome.',
       );
       return;
     }
 
-    if (_isListening) {
-      await _speechToText.stop();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isListening = false;
-        _voiceStatus = 'Microfono detenido.';
-      });
+    if (_isListening || _speechToText.isListening) {
+      await _stopListening(discardResult: true);
       return;
     }
 
-    final systemLocale = await _speechToText.systemLocale();
-    final localeId = _spanishLocaleId ?? systemLocale?.localeId;
+    final localeId = _spanishLocaleId ?? 'es-ES';
 
     await _speechToText.listen(
       onResult: _onSpeechResult,
@@ -219,6 +208,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
+    _lastTranscript = result.recognizedWords;
     setState(() {
       _topicController.text = result.recognizedWords;
       _topicController.selection = TextSelection.fromPosition(
@@ -231,6 +221,10 @@ class _VerseHomePageState extends State<VerseHomePage> {
   }
 
   Future<void> _buildVerseForTopic() async {
+    if (_isListening || _speechToText.isListening) {
+      await _stopListening(discardResult: false);
+    }
+
     final topic = _topicController.text.trim();
     if (topic.isEmpty) {
       _showSnackBar('Primero escribe o dicta el tema del versiculo.');
@@ -301,6 +295,16 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
   Future<void> _speak(String text) async {
     try {
+      if (!_ttsReady) {
+        await _configureVoiceTools();
+      }
+      final hasSpanishVoice = await _ensureSpanishTtsVoice();
+      if (!hasSpanishVoice) {
+        _showSnackBar(
+          'No hay voz en espanol disponible en este navegador.',
+        );
+        return;
+      }
       await _flutterTts.stop();
       await _flutterTts.speak(text);
     } catch (_) {
@@ -315,6 +319,181 @@ class _VerseHomePageState extends State<VerseHomePage> {
     }
     setState(() {
       _isSpeaking = false;
+    });
+  }
+
+  Future<void> _setBestSpanishVoice() async {
+    try {
+      final voices = await _flutterTts.getVoices;
+      if (voices is! List) {
+        return;
+      }
+
+      final parsedVoices = voices
+          .whereType<Map>()
+          .map(
+            (voice) => voice.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          )
+          .toList();
+      if (parsedVoices.isEmpty) {
+        return;
+      }
+
+      final preferredSpanishVoice = parsedVoices.firstWhere(
+        (voice) {
+          final locale = (voice['locale'] ?? '').toString().toLowerCase();
+          final name = (voice['name'] ?? '').toString().toLowerCase();
+          return locale.startsWith('es') &&
+              (name.contains('neural') ||
+                  name.contains('premium') ||
+                  name.contains('espa') ||
+                  name.contains('spanish'));
+        },
+        orElse: () => parsedVoices.firstWhere(
+          (voice) => (voice['locale'] ?? '')
+              .toString()
+              .toLowerCase()
+              .startsWith('es'),
+          orElse: () => <String, dynamic>{},
+        ),
+      );
+
+      final locale = preferredSpanishVoice['locale']?.toString();
+      final name = preferredSpanishVoice['name']?.toString();
+      if (locale == null || locale.isEmpty || name == null || name.isEmpty) {
+        return;
+      }
+
+      await _flutterTts.setVoice({
+        'name': name,
+        'locale': locale,
+      });
+    } catch (_) {
+      // Fallback to setLanguage already configured above.
+    }
+  }
+
+  Future<void> _initializeSpeech() async {
+    try {
+      final hasSpeech = await _speechToText.initialize(
+        onStatus: _handleSpeechStatus,
+        onError: _handleSpeechError,
+      );
+
+      _speechEnabled = hasSpeech;
+      if (!_speechEnabled) {
+        _spanishLocaleId = null;
+        return;
+      }
+
+      final locales = await _speechToText.locales();
+      _spanishLocaleId = _pickBestSpanishSpeechLocale(
+        locales.map((locale) => locale.localeId).toList(),
+      );
+    } catch (_) {
+      _speechEnabled = false;
+      _spanishLocaleId = null;
+    }
+  }
+
+  Future<bool> _ensureSpanishTtsVoice() async {
+    final preferredTtsLanguage = await _pickBestSpanishTtsLanguage();
+    if (preferredTtsLanguage == null) {
+      return false;
+    }
+    await _flutterTts.setLanguage(preferredTtsLanguage);
+    await _setBestSpanishVoice();
+    return true;
+  }
+
+  Future<String?> _pickBestSpanishTtsLanguage() async {
+    try {
+      final languages = await _flutterTts.getLanguages;
+      if (languages is! List) {
+        return null;
+      }
+      final languageCodes = languages.map((value) => value.toString()).toList();
+      return _pickPreferredSpanishCode(languageCodes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _pickBestSpanishSpeechLocale(List<String> localeIds) {
+    return _pickPreferredSpanishCode(localeIds);
+  }
+
+  String? _pickPreferredSpanishCode(List<String> codes) {
+    if (codes.isEmpty) {
+      return null;
+    }
+
+    const preferredCodes = ['es-AR', 'es-ES', 'es-MX', 'es-US', 'es-419', 'es'];
+    for (final preferred in preferredCodes) {
+      for (final code in codes) {
+        final normalizedCode = code.replaceAll('_', '-').toLowerCase();
+        final normalizedPreferred = preferred.toLowerCase();
+        if (normalizedCode == normalizedPreferred) {
+          return code;
+        }
+      }
+    }
+
+    for (final code in codes) {
+      if (code.replaceAll('_', '-').toLowerCase().startsWith('es')) {
+        return code;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _stopListening({required bool discardResult}) async {
+    _isStoppingListening = true;
+    if (discardResult) {
+      await _speechToText.cancel();
+    } else {
+      await _speechToText.stop();
+    }
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isListening = false;
+      _voiceStatus = discardResult
+          ? 'Microfono detenido.'
+          : 'Transcripcion lista. Toca buscar versiculo.';
+    });
+  }
+
+  void _handleTopicChanged(String value) {
+    if (value.trim().isNotEmpty) {
+      return;
+    }
+
+    if (_lastTranscript.isEmpty &&
+        _lastTopic.isEmpty &&
+        !_isListening &&
+        !_speechToText.isListening) {
+      return;
+    }
+
+    _lastTranscript = '';
+    _lastTopic = '';
+    if (_isListening || _speechToText.isListening) {
+      _stopListening(discardResult: true);
+    }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _voiceStatus = _speechEnabled
+          ? 'Texto borrado. Puedes escribir o dictar un tema nuevo.'
+          : 'Texto borrado. Puedes escribir un tema nuevo.';
     });
   }
 
@@ -486,6 +665,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
             maxLines: 3,
             minLines: 2,
             textInputAction: TextInputAction.done,
+            onChanged: _handleTopicChanged,
             onSubmitted: (_) => _buildVerseForTopic(),
             decoration: InputDecoration(
               hintText: 'Ejemplo: ansiedad, trabajo, familia, paz, salud...',
