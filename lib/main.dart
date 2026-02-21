@@ -57,6 +57,13 @@ class _VerseHomePageState extends State<VerseHomePage> {
   static const String _appName = 'VersoVivo';
   static const String _question =
       '¿Sobre qué quieres que trate el versículo de hoy?';
+  static const String _welcomeMessage =
+      'Primera app de las chicas cristianas de GBA y CABA de la Provincia de Buenos Aires, Argentina.\n'
+      'Que nuestro trabajo celebre a Dios cada día.\n'
+      'Gracias a todas por poner su corazón en Jesús y compartirlo.\n'
+      'Espero que que éste sea el camino a grandes logros en pos de Su voluntad.\n'
+      '\n'
+      'Las quiero mucho!! 💗.';
   static const String _webUrl = 'https://verso-vivo.pages.dev';
   static const String _androidUrl =
       'https://play.google.com/store/apps/details?id=com.usuario.verso_vivo';
@@ -77,6 +84,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
   bool _speechEnabled = false;
   bool _isListening = false;
   bool _isSpeaking = false;
+  bool _showWelcomeOverlay = true;
 
   @override
   void initState() {
@@ -709,7 +717,77 @@ class _VerseHomePageState extends State<VerseHomePage> {
                 ),
               ),
             ),
+            if (_showWelcomeOverlay) Positioned.fill(child: _buildWelcomeOverlay()),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomeOverlay() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF102327).withOpacity(0.62),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: _SoftPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bienvenidas',
+                    style: GoogleFonts.playfairDisplay(
+                      fontSize: 40,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF163437),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _welcomeMessage,
+                    style: GoogleFonts.manrope(
+                      fontSize: 15.5,
+                      height: 1.45,
+                      color: const Color(0xFF273537),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _showWelcomeOverlay = false;
+                        });
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF1B7F6D),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 13,
+                        ),
+                        textStyle: GoogleFonts.manrope(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text('Continuar'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
