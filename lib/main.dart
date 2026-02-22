@@ -3,17 +3,27 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
+
+import 'download_helper.dart' as download_helper;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,11 +84,19 @@ class _VerseHomePageState extends State<VerseHomePage> {
   static const String _iosUrl = 'https://apps.apple.com/app/id0000000000';
   static const String _bibleApiBaseUrl =
       'https://raw.githubusercontent.com/maatheusgois/bible/main/versions/es/rvr';
+  static const String _seenVersesPrefsKey = 'seen_verses_v1';
+  static const String _dailyVerseNotificationChannelId =
+      'verso_vivo_daily_verse_channel';
+  static const int _dailyVerseNotificationBaseId = 4800;
+  static const int _dailyVerseNotificationDaysAhead = 45;
 
   final TextEditingController _topicController = TextEditingController();
   final SpeechToText _speechToText = SpeechToText();
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
   final FlutterTts _flutterTts = FlutterTts();
   final Random _random = Random();
+  final Set<String> _seenVerseReferences = <String>{};
 
   VerseCardData? _selectedVerse;
   String _voiceStatus = 'Escribe o usa el micrófono para contar tu tema.';
@@ -92,10 +110,250 @@ class _VerseHomePageState extends State<VerseHomePage> {
   bool _isSpeaking = false;
   bool _showWelcomeOverlay = true;
 
+  bool get _isAndroidPlatform =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  String _speechUnavailableStatusMessage() {
+    if (kIsWeb) {
+      return 'Micrófono no disponible aquí. Verifica permiso de micrófono en tu navegador.';
+    }
+    if (_isAndroidPlatform) {
+      return 'Micrófono no disponible. Revisa permiso de micrófono y servicios de voz de Google.';
+    }
+    return 'Micrófono no disponible en este dispositivo.';
+  }
+
+  String _speechUnavailableActionMessage() {
+    if (kIsWeb) {
+      return 'El reconocimiento de voz no está disponible. Habilita el micrófono en tu navegador.';
+    }
+    if (_isAndroidPlatform) {
+      return 'El reconocimiento de voz no está disponible. Habilita permiso de micrófono y Google Speech Services.';
+    }
+    return 'El reconocimiento de voz no está disponible en este dispositivo.';
+  }
+
+  String _ttsUnavailableMessage() {
+    if (_isAndroidPlatform) {
+      return 'No pude reproducir voz. Activa el motor de texto a voz en Android.';
+    }
+    return 'No pude reproducir voz en este dispositivo.';
+  }
+
   @override
   void initState() {
     super.initState();
     _configureVoiceTools();
+    _bootstrapDailyVerseExperience();
+  }
+
+  Future<void> _bootstrapDailyVerseExperience() async {
+    await _restoreSeenVerses();
+    await _initializeDailyNotifications();
+  }
+
+  Future<void> _restoreSeenVerses() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final storedReferences = preferences.getStringList(_seenVersesPrefsKey) ?? [];
+      _seenVerseReferences
+        ..clear()
+        ..addAll(storedReferences);
+    } catch (_) {
+      _seenVerseReferences.clear();
+    }
+  }
+
+  Future<void> _persistSeenVerses() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setStringList(
+        _seenVersesPrefsKey,
+        _seenVerseReferences.toList(),
+      );
+    } catch (_) {
+      // Persistence is optional, app can continue without storage.
+    }
+  }
+
+  Future<void> _markVerseAsSeen(VerseCardData verse) async {
+    final referenceKey = verse.reference.trim();
+    if (referenceKey.isEmpty || _seenVerseReferences.contains(referenceKey)) {
+      return;
+    }
+
+    _seenVerseReferences.add(referenceKey);
+    await _persistSeenVerses();
+  }
+
+  VerseCardData _pickVerseOfDayForDate(DateTime date) {
+    final versePool = _dailyVersePool;
+    final utcDate = DateTime.utc(date.year, date.month, date.day);
+    final baseDate = DateTime.utc(2026, 1, 1);
+    final dayNumber = utcDate.difference(baseDate).inDays;
+    final verseCount = versePool.length;
+    final step = _coprimeStep(verseCount);
+    final index = _positiveModulo(dayNumber * step + 17, verseCount);
+    return versePool[index];
+  }
+
+  List<VerseCardData> get _dailyVersePool {
+    final psalms = _verseCatalog
+        .where((verse) => _normalize(verse.reference).startsWith('salmo '))
+        .toList();
+    if (psalms.isNotEmpty) {
+      return psalms;
+    }
+    return _verseCatalog;
+  }
+
+  int _coprimeStep(int modulo) {
+    if (modulo <= 2) {
+      return 1;
+    }
+
+    var candidate = 37;
+    while (_greatestCommonDivisor(candidate, modulo) != 1) {
+      candidate++;
+    }
+    return candidate;
+  }
+
+  int _greatestCommonDivisor(int a, int b) {
+    var first = a.abs();
+    var second = b.abs();
+    while (second != 0) {
+      final remainder = first % second;
+      first = second;
+      second = remainder;
+    }
+    return first;
+  }
+
+  int _positiveModulo(int value, int modulo) {
+    final remainder = value % modulo;
+    return remainder < 0 ? remainder + modulo : remainder;
+  }
+
+  Future<void> _showVerseOfDay() async {
+    final verse = _pickVerseOfDayForDate(DateTime.now());
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedVerse = verse;
+      _lastTopic = 'Versículo del día';
+      _voiceStatus = 'Versículo del día listo. Puedes leerlo o compartirlo.';
+    });
+
+    await _markVerseAsSeen(verse);
+    await _speak('Versículo del día. ${verse.text}. ${verse.reference}.');
+  }
+
+  Future<void> _initializeDailyNotifications() async {
+    if (kIsWeb) {
+      return;
+    }
+
+    try {
+      tz.initializeTimeZones();
+      final timezoneName = await FlutterTimezone.getLocalTimezone();
+      final location = tz.getLocation(timezoneName);
+      tz.setLocalLocation(location);
+    } catch (_) {
+      // Fallback to timezone package default if device timezone cannot be read.
+    }
+
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const darwinSettings = DarwinInitializationSettings();
+    const initializationSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: darwinSettings,
+      macOS: darwinSettings,
+    );
+
+    await _localNotifications.initialize(initializationSettings);
+
+    final androidImplementation = _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidImplementation?.requestNotificationsPermission();
+    await androidImplementation?.requestExactAlarmsPermission();
+
+    final iosImplementation = _localNotifications
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>();
+    await iosImplementation?.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    final macosImplementation = _localNotifications
+        .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin>();
+    await macosImplementation?.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    await _scheduleDailyVerseNotifications();
+  }
+
+  Future<void> _scheduleDailyVerseNotifications() async {
+    final now = DateTime.now();
+    final startDate = DateTime(now.year, now.month, now.day);
+
+    for (var offset = 0; offset < _dailyVerseNotificationDaysAhead; offset++) {
+      await _localNotifications.cancel(_dailyVerseNotificationBaseId + offset);
+    }
+
+    for (var offset = 0; offset < _dailyVerseNotificationDaysAhead; offset++) {
+      final targetDate = startDate.add(Duration(days: offset));
+      final scheduleDate = DateTime(
+        targetDate.year,
+        targetDate.month,
+        targetDate.day,
+        9,
+      );
+      if (scheduleDate.isBefore(now.add(const Duration(minutes: 1)))) {
+        continue;
+      }
+
+      final verse = _pickVerseOfDayForDate(targetDate);
+      await _localNotifications.zonedSchedule(
+        _dailyVerseNotificationBaseId + offset,
+        'Versículo del día • $_appName',
+        '${verse.reference}: ${_truncateNotificationBody(verse.text)}',
+        tz.TZDateTime.from(scheduleDate, tz.local),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            _dailyVerseNotificationChannelId,
+            'Versículo del día',
+            channelDescription:
+                'Notificaciones diarias automáticas con el salmo del día.',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(),
+          macOS: DarwinNotificationDetails(),
+        ),
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    }
+  }
+
+  String _truncateNotificationBody(String value) {
+    const maxLength = 130;
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return '${normalized.substring(0, maxLength - 1)}…';
   }
 
   Future<void> _configureVoiceTools() async {
@@ -146,8 +404,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
         _voiceStatus =
             'Micrófono listo. Habla o escribe y luego toca buscar.';
       } else {
-        _voiceStatus =
-            'Micrófono no disponible aquí. Verifica permiso de micrófono en Chrome.';
+        _voiceStatus = _speechUnavailableStatusMessage();
       }
     });
   }
@@ -187,9 +444,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     }
 
     if (!_speechEnabled) {
-      _showSnackBar(
-        'El reconocimiento de voz no está disponible. Habilita el micrófono en Chrome.',
-      );
+      _showSnackBar(_speechUnavailableActionMessage());
       return;
     }
 
@@ -198,19 +453,29 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
-    final localeId = _spanishLocaleId ?? 'es-ES';
-
-    await _speechToText.listen(
-      onResult: _onSpeechResult,
-      localeId: localeId,
-      listenOptions: SpeechListenOptions(
-        listenMode: ListenMode.confirmation,
-        partialResults: true,
-        cancelOnError: true,
-      ),
-      listenFor: const Duration(seconds: 25),
-      pauseFor: const Duration(seconds: 4),
-    );
+    try {
+      await _speechToText.listen(
+        onResult: _onSpeechResult,
+        localeId: _spanishLocaleId,
+        listenOptions: SpeechListenOptions(
+          listenMode: ListenMode.confirmation,
+          partialResults: true,
+          cancelOnError: true,
+        ),
+        listenFor: const Duration(seconds: 25),
+        pauseFor: const Duration(seconds: 4),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isListening = false;
+        _voiceStatus = _speechUnavailableStatusMessage();
+      });
+      _showSnackBar(_speechUnavailableActionMessage());
+      return;
+    }
 
     if (!mounted) {
       return;
@@ -273,6 +538,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
       _voiceStatus = 'Versículo listo. Puedes leerlo o compartirlo.';
     });
 
+    await _markVerseAsSeen(verse);
     await _speak(
       'Sobre $topic, este es tu versículo de hoy. ${verse.text}. ${verse.reference}.',
     );
@@ -306,10 +572,26 @@ class _VerseHomePageState extends State<VerseHomePage> {
           .where((entry) => entry.value == topScore)
           .map((entry) => entry.key)
           .toList();
-      return topVerses[_random.nextInt(topVerses.length)];
+      final preferredTopVerses = _preferUnseenVerses(topVerses);
+      return preferredTopVerses[_random.nextInt(preferredTopVerses.length)];
     }
 
-    return _verseCatalog[_random.nextInt(_verseCatalog.length)];
+    final fallbackPool = _preferUnseenVerses(_verseCatalog);
+    return fallbackPool[_random.nextInt(fallbackPool.length)];
+  }
+
+  List<VerseCardData> _preferUnseenVerses(List<VerseCardData> verses) {
+    if (verses.isEmpty) {
+      return verses;
+    }
+
+    final unseenVerses = verses
+        .where((verse) => !_seenVerseReferences.contains(verse.reference))
+        .toList();
+    if (unseenVerses.isNotEmpty) {
+      return unseenVerses;
+    }
+    return verses;
   }
 
   _BibleParsedReference? _parseBibleReference(String input) {
@@ -591,7 +873,8 @@ class _VerseHomePageState extends State<VerseHomePage> {
     if (matches.isEmpty) {
       return null;
     }
-    return matches[_random.nextInt(matches.length)];
+    final preferredMatches = _preferUnseenVerses(matches);
+    return preferredMatches[_random.nextInt(preferredMatches.length)];
   }
 
   ({String book, int chapter})? _extractBookAndChapter(String reference) {
@@ -662,16 +945,16 @@ class _VerseHomePageState extends State<VerseHomePage> {
         await _configureVoiceTools();
       }
       final hasSpanishVoice = await _ensureSpanishTtsVoice();
-      if (!hasSpanishVoice) {
+      if (!hasSpanishVoice && !_isAndroidPlatform) {
         _showSnackBar(
-          'No hay voz en español disponible en este navegador.',
+          'No hay voz en español disponible en este dispositivo.',
         );
         return;
       }
       await _flutterTts.stop();
       await _flutterTts.speak(text);
     } catch (_) {
-      _showSnackBar('No pude reproducir voz en este dispositivo.');
+      _showSnackBar(_ttsUnavailableMessage());
     }
   }
 
@@ -763,12 +1046,66 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
   Future<bool> _ensureSpanishTtsVoice() async {
     final preferredTtsLanguage = await _pickBestSpanishTtsLanguage();
-    if (preferredTtsLanguage == null) {
+    if (preferredTtsLanguage != null) {
+      final appliedPreferredLanguage = await _trySetTtsLanguage(
+        preferredTtsLanguage,
+      );
+      if (appliedPreferredLanguage) {
+        await _setBestSpanishVoice();
+        return true;
+      }
+    }
+
+    for (final fallbackLanguage in _fallbackSpanishTtsCodes()) {
+      final appliedFallbackLanguage = await _trySetTtsLanguage(
+        fallbackLanguage,
+      );
+      if (appliedFallbackLanguage) {
+        await _setBestSpanishVoice();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  List<String> _fallbackSpanishTtsCodes() {
+    final fallbackCodes = <String>[];
+    if (_spanishLocaleId != null && _spanishLocaleId!.isNotEmpty) {
+      fallbackCodes.add(_spanishLocaleId!);
+    }
+    fallbackCodes.addAll(const ['es-AR', 'es-ES', 'es-MX', 'es-US', 'es']);
+    return fallbackCodes.toSet().toList();
+  }
+
+  Future<bool> _trySetTtsLanguage(String code) async {
+    try {
+      final result = await _flutterTts.setLanguage(code);
+      return _isTtsOperationSuccessful(result);
+    } catch (_) {
       return false;
     }
-    await _flutterTts.setLanguage(preferredTtsLanguage);
-    await _setBestSpanishVoice();
-    return true;
+  }
+
+  bool _isTtsOperationSuccessful(dynamic result) {
+    if (result == null) {
+      return true;
+    }
+    if (result is bool) {
+      return result;
+    }
+    if (result is int) {
+      return result > 0;
+    }
+    if (result is String) {
+      final normalizedResult = result.trim().toLowerCase();
+      final parsedIntResult = int.tryParse(normalizedResult);
+      if (parsedIntResult != null) {
+        return parsedIntResult > 0;
+      }
+      return normalizedResult == 'true' || normalizedResult == 'success';
+    }
+    return false;
   }
 
   Future<String?> _pickBestSpanishTtsLanguage() async {
@@ -867,30 +1204,132 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
-    final message = _buildVerseShareText(verse);
+    await _shareVerseAsImage(verse);
+  }
+
+  Future<void> _downloadVersePdf() async {
+    final verse = _selectedVerse;
+    if (verse == null) {
+      _showSnackBar('Genera un versículo antes de descargar.');
+      return;
+    }
+
     try {
-      final imageBytes = await _buildVerseShareImageBytes(verse);
+      final pdfBytes = await _buildVerseSharePdfBytes(verse);
+      final fileName = _buildVerseFileName(verse: verse, extension: 'pdf');
+
+      if (_downloadBytesOnWeb(
+        bytes: pdfBytes,
+        mimeType: 'application/pdf',
+        fileName: fileName,
+      )) {
+        _showSnackBar('PDF descargado en tu dispositivo.');
+        return;
+      }
+
+      final pdfFile = XFile.fromData(
+        pdfBytes,
+        mimeType: 'application/pdf',
+        name: fileName,
+      );
+      await Share.shareXFiles(
+        [pdfFile],
+        subject: 'Versículo diario en $_appName',
+      );
+    } catch (_) {
+      _showSnackBar('No pude generar el PDF del versículo.');
+    }
+  }
+
+  Future<void> _shareVerseAsImage(VerseCardData verse) async {
+    Uint8List? imageBytes;
+
+    try {
+      imageBytes = await _buildVerseShareImageBytes(verse);
       if (imageBytes == null || imageBytes.isEmpty) {
         throw Exception('No se pudo generar la imagen del versículo.');
       }
 
+      final fileName = _buildVerseFileName(verse: verse, extension: 'png');
       final imageFile = XFile.fromData(
         imageBytes,
         mimeType: 'image/png',
-        name: 'versiculo-versovivo.png',
+        name: fileName,
       );
 
       await Share.shareXFiles(
         [imageFile],
-        text: message,
         subject: 'Versículo diario en $_appName',
       );
     } catch (_) {
-      await Share.share(message, subject: 'Versículo diario en $_appName');
-      _showSnackBar(
-        'Compartí en texto porque no se pudo generar la imagen en este dispositivo.',
-      );
+      if (imageBytes != null &&
+          imageBytes.isNotEmpty &&
+          _downloadBytesOnWeb(
+            bytes: imageBytes,
+            mimeType: 'image/png',
+            fileName: _buildVerseFileName(verse: verse, extension: 'png'),
+          )) {
+        _showSnackBar(
+          'No se abrió el menú de compartir, pero descargué la imagen para que la subas.',
+        );
+        return;
+      }
+      _showSnackBar('No pude compartir la imagen en este dispositivo.');
     }
+  }
+
+  bool _downloadBytesOnWeb({
+    required Uint8List bytes,
+    required String mimeType,
+    required String fileName,
+  }) {
+    if (!kIsWeb) {
+      return false;
+    }
+    return download_helper.downloadBytes(
+      bytes: bytes,
+      mimeType: mimeType,
+      fileName: fileName,
+    );
+  }
+
+  String _buildVerseFileName({
+    required VerseCardData verse,
+    required String extension,
+  }) {
+    final normalizedReference = _normalize(verse.reference).replaceAll(' ', '-');
+    final referencePart = normalizedReference.isEmpty
+        ? 'versiculo'
+        : normalizedReference;
+    return 'versovivo-$referencePart.$extension';
+  }
+
+  Future<Uint8List> _buildVerseSharePdfBytes(VerseCardData verse) async {
+    final imageBytes = await _buildVerseShareImageBytes(verse);
+    if (imageBytes == null || imageBytes.isEmpty) {
+      throw Exception('No se pudo generar la imagen para el PDF.');
+    }
+
+    final document = pw.Document(
+      title: 'Versículo en $_appName',
+      author: _appName,
+      creator: _appName,
+    );
+    final verseImage = pw.MemoryImage(imageBytes);
+
+    document.addPage(
+      pw.Page(
+        pageFormat: const PdfPageFormat(1080, 1350, marginAll: 0),
+        margin: pw.EdgeInsets.zero,
+        build: (context) {
+          return pw.SizedBox.expand(
+            child: pw.Image(verseImage, fit: pw.BoxFit.cover),
+          );
+        },
+      ),
+    );
+
+    return document.save();
   }
 
   Future<void> _shareApp() async {
@@ -902,16 +1341,6 @@ class _VerseHomePageState extends State<VerseHomePage> {
     ].join('\n');
 
     await Share.share(message, subject: 'Te comparto $_appName');
-  }
-
-  String _buildVerseShareText(VerseCardData verse) {
-    return [
-      'Mi versículo de hoy en $_appName:',
-      '"${verse.text}"',
-      verse.reference,
-      if (_lastTopic.isNotEmpty) 'Tema: $_lastTopic',
-      'Web: $_webUrl',
-    ].join('\n');
   }
 
   String _buildAppShareText() {
@@ -926,6 +1355,9 @@ class _VerseHomePageState extends State<VerseHomePage> {
   Future<Uint8List?> _buildVerseShareImageBytes(VerseCardData verse) async {
     const imageWidth = 1080.0;
     const imageHeight = 1350.0;
+    final titleFontFamily = GoogleFonts.playfairDisplay().fontFamily;
+    final bodyFontFamily = GoogleFonts.manrope().fontFamily;
+
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(
       recorder,
@@ -956,6 +1388,37 @@ class _VerseHomePageState extends State<VerseHomePage> {
       glowPaint..color = const Color(0x44FFF0D4),
     );
 
+    _paintFloralOrnament(
+      canvas: canvas,
+      center: const Offset(120, 190),
+      petalRadius: 56,
+      color: const Color(0x66FFE6C3),
+    );
+    _paintFloralOrnament(
+      canvas: canvas,
+      center: const Offset(970, 1110),
+      petalRadius: 62,
+      color: const Color(0x55FFF2DA),
+    );
+    _paintFloralOrnament(
+      canvas: canvas,
+      center: const Offset(140, 1170),
+      petalRadius: 48,
+      color: const Color(0x4DFFF2DA),
+    );
+
+    final logoImage = await _loadAssetImage('assets/branding/app_icon_foreground.png');
+    if (logoImage != null) {
+      paintImage(
+        canvas: canvas,
+        rect: const Rect.fromLTWH(900, 64, 120, 120),
+        image: logoImage,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+      );
+      logoImage.dispose();
+    }
+
     final verseCardRect = RRect.fromRectAndRadius(
       const Rect.fromLTWH(66, 238, 948, 760),
       const Radius.circular(44),
@@ -971,16 +1434,27 @@ class _VerseHomePageState extends State<VerseHomePage> {
         ..strokeWidth = 3
         ..color = const Color(0x4D1B7F6D),
     );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(92, 264, 896, 708),
+        const Radius.circular(36),
+      ),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = const Color(0x33736E5F),
+    );
 
     _paintShareText(
       canvas: canvas,
       text: _appName,
       offset: const Offset(78, 70),
       maxWidth: 924,
-      style: const TextStyle(
+      style: TextStyle(
+        fontFamily: titleFontFamily,
         fontSize: 60,
         fontWeight: FontWeight.w700,
-        color: Color(0xFFFFF6EB),
+        color: const Color(0xFFFFF6EB),
       ),
     );
     _paintShareText(
@@ -988,10 +1462,11 @@ class _VerseHomePageState extends State<VerseHomePage> {
       text: 'Versículo de hoy',
       offset: const Offset(82, 158),
       maxWidth: 920,
-      style: const TextStyle(
+      style: TextStyle(
+        fontFamily: bodyFontFamily,
         fontSize: 36,
         fontWeight: FontWeight.w700,
-        color: Color(0xFFF0E9D9),
+        color: const Color(0xFFF0E9D9),
       ),
     );
 
@@ -1000,11 +1475,12 @@ class _VerseHomePageState extends State<VerseHomePage> {
       text: '"${verse.text}"',
       offset: const Offset(120, 310),
       maxWidth: 840,
-      style: const TextStyle(
+      style: TextStyle(
+        fontFamily: titleFontFamily,
         fontSize: 54,
-        height: 1.2,
+        height: 1.18,
         fontWeight: FontWeight.w600,
-        color: Color(0xFF183438),
+        color: const Color(0xFF183438),
       ),
       maxLines: 11,
     );
@@ -1013,10 +1489,11 @@ class _VerseHomePageState extends State<VerseHomePage> {
       text: verse.reference,
       offset: const Offset(120, 915),
       maxWidth: 840,
-      style: const TextStyle(
+      style: TextStyle(
+        fontFamily: bodyFontFamily,
         fontSize: 34,
         fontWeight: FontWeight.w700,
-        color: Color(0xFF1B7F6D),
+        color: const Color(0xFF1B7F6D),
       ),
     );
 
@@ -1026,10 +1503,11 @@ class _VerseHomePageState extends State<VerseHomePage> {
         text: 'Tema: $_lastTopic',
         offset: const Offset(120, 965),
         maxWidth: 840,
-        style: const TextStyle(
+        style: TextStyle(
+          fontFamily: bodyFontFamily,
           fontSize: 30,
           fontWeight: FontWeight.w600,
-          color: Color(0xFF3A4C4E),
+          color: const Color(0xFF3A4C4E),
         ),
         maxLines: 2,
       );
@@ -1045,16 +1523,30 @@ class _VerseHomePageState extends State<VerseHomePage> {
     );
     _paintShareText(
       canvas: canvas,
-      text: 'Comparte la app: $_webUrl',
+      text: 'Diseño premium de fe para compartir en tus redes.',
       offset: const Offset(104, 1120),
       maxWidth: 880,
-      style: const TextStyle(
+      style: TextStyle(
+        fontFamily: bodyFontFamily,
         fontSize: 28,
         height: 1.3,
         fontWeight: FontWeight.w600,
-        color: Color(0xFFFFF6EB),
+        color: const Color(0xFFFFF6EB),
       ),
       maxLines: 3,
+    );
+    _paintShareText(
+      canvas: canvas,
+      text: '$_appName  •  Fe viva cada día',
+      offset: const Offset(104, 1212),
+      maxWidth: 880,
+      style: TextStyle(
+        fontFamily: bodyFontFamily,
+        fontSize: 24,
+        fontWeight: FontWeight.w600,
+        color: const Color(0xFFEDE4D5),
+      ),
+      maxLines: 1,
     );
 
     final picture = recorder.endRecording();
@@ -1062,6 +1554,58 @@ class _VerseHomePageState extends State<VerseHomePage> {
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     image.dispose();
     return byteData?.buffer.asUint8List();
+  }
+
+  Future<ui.Image?> _loadAssetImage(String assetPath) async {
+    try {
+      final imageData = await rootBundle.load(assetPath);
+      final codec = await ui.instantiateImageCodec(
+        imageData.buffer.asUint8List(),
+      );
+      final frameInfo = await codec.getNextFrame();
+      codec.dispose();
+      return frameInfo.image;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _paintFloralOrnament({
+    required Canvas canvas,
+    required Offset center,
+    required double petalRadius,
+    required Color color,
+  }) {
+    final petalPaint = Paint()..color = color;
+    for (var index = 0; index < 6; index++) {
+      final angle = (pi * 2 / 6) * index;
+      final petalCenter = Offset(
+        center.dx + cos(angle) * petalRadius * 0.9,
+        center.dy + sin(angle) * petalRadius * 0.9,
+      );
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: petalCenter,
+          width: petalRadius * 0.78,
+          height: petalRadius * 1.24,
+        ),
+        petalPaint,
+      );
+    }
+
+    canvas.drawCircle(
+      center,
+      petalRadius * 0.36,
+      Paint()..color = const Color(0x88FFF8E7),
+    );
+    canvas.drawCircle(
+      center,
+      petalRadius * 1.24,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.7
+        ..color = color.withOpacity(0.48),
+    );
   }
 
   void _paintShareText({
@@ -1091,7 +1635,16 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return;
     }
 
-    final text = shareVerse ? _buildVerseShareText(verse!) : _buildAppShareText();
+    if (shareVerse) {
+      if (kIsWeb) {
+        await _shareVerseOnWebSocial(network: network, verse: verse!);
+      } else {
+        await _shareVerseAsImage(verse!);
+      }
+      return;
+    }
+
+    final text = _buildAppShareText();
     final encodedText = Uri.encodeComponent(text);
     final encodedUrl = Uri.encodeComponent(_webUrl);
     final encodedImage = Uri.encodeComponent('$_webUrl/icons/Icon-512.png');
@@ -1099,7 +1652,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     if (network == _SocialNetwork.instagram) {
       await Share.share(
         text,
-        subject: shareVerse ? 'Versículo diario en $_appName' : 'Te comparto $_appName',
+        subject: 'Te comparto $_appName',
       );
       _showSnackBar(
         'Instagram se comparte desde la ventana nativa de compartir.',
@@ -1137,6 +1690,172 @@ class _VerseHomePageState extends State<VerseHomePage> {
     if (!launched) {
       _showSnackBar('No pude abrir ${network.label}.');
     }
+  }
+
+  Future<void> _shareVerseOnWebSocial({
+    required _SocialNetwork network,
+    required VerseCardData verse,
+  }) async {
+    final imageBytes = await _buildVerseShareImageBytes(verse);
+    if (imageBytes == null || imageBytes.isEmpty) {
+      _showSnackBar('No pude generar la imagen para compartir.');
+      return;
+    }
+
+    final downloaded = _downloadBytesOnWeb(
+      bytes: imageBytes,
+      mimeType: 'image/png',
+      fileName: _buildVerseFileName(verse: verse, extension: 'png'),
+    );
+    if (!downloaded) {
+      _showSnackBar('No pude descargar la imagen para compartir en la web.');
+      return;
+    }
+
+    final mode = await _pickWebShareMode(network);
+    if (mode == null) {
+      return;
+    }
+
+    final shareUri = _buildWebShareUri(network: network, mode: mode);
+    final launched = await launchUrl(
+      shareUri,
+      mode: LaunchMode.platformDefault,
+      webOnlyWindowName: '_blank',
+    );
+    if (!launched) {
+      _showSnackBar('No pude abrir ${network.label}.');
+      return;
+    }
+
+    _showSnackBar(
+      'Imagen descargada. En ${network.label}, usa "${mode.label}" para subirla.',
+    );
+  }
+
+  Future<_WebShareMode?> _pickWebShareMode(_SocialNetwork network) async {
+    final availableModes = _webShareModesFor(network);
+    if (availableModes.length == 1) {
+      return availableModes.first;
+    }
+
+    return showModalBottomSheet<_WebShareMode>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFFFFFCF7),
+      builder: (modalContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                  child: Text(
+                    '¿Cómo quieres compartir en ${network.label}?',
+                    style: GoogleFonts.manrope(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF264246),
+                    ),
+                  ),
+                ),
+                ...availableModes.map(
+                  (mode) => ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    title: Text(
+                      mode.label,
+                      style: GoogleFonts.manrope(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF264246),
+                      ),
+                    ),
+                    subtitle: Text(
+                      mode.description,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12.5,
+                        color: const Color(0xFF516769),
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.of(modalContext).pop(mode);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<_WebShareMode> _webShareModesFor(_SocialNetwork network) {
+    return switch (network) {
+      _SocialNetwork.whatsapp => const [_WebShareMode.message],
+      _SocialNetwork.instagram => const [
+        _WebShareMode.post,
+        _WebShareMode.reel,
+        _WebShareMode.story,
+        _WebShareMode.message,
+      ],
+      _SocialNetwork.facebook => const [
+        _WebShareMode.post,
+        _WebShareMode.reel,
+        _WebShareMode.story,
+        _WebShareMode.message,
+      ],
+      _SocialNetwork.x => const [_WebShareMode.post],
+      _SocialNetwork.linkedin => const [
+        _WebShareMode.post,
+        _WebShareMode.message,
+      ],
+      _SocialNetwork.pinterest => const [
+        _WebShareMode.pin,
+        _WebShareMode.message,
+      ],
+    };
+  }
+
+  Uri _buildWebShareUri({
+    required _SocialNetwork network,
+    required _WebShareMode mode,
+  }) {
+    return switch ((network, mode)) {
+      (_SocialNetwork.whatsapp, _) => Uri.parse('https://web.whatsapp.com/'),
+      (_SocialNetwork.instagram, _WebShareMode.post) =>
+        Uri.parse('https://www.instagram.com/create/select/'),
+      (_SocialNetwork.instagram, _WebShareMode.reel) =>
+        Uri.parse('https://www.instagram.com/create/select/'),
+      (_SocialNetwork.instagram, _WebShareMode.story) =>
+        Uri.parse('https://www.instagram.com/'),
+      (_SocialNetwork.instagram, _WebShareMode.message) =>
+        Uri.parse('https://www.instagram.com/direct/inbox/'),
+      (_SocialNetwork.facebook, _WebShareMode.post) =>
+        Uri.parse('https://www.facebook.com/'),
+      (_SocialNetwork.facebook, _WebShareMode.reel) =>
+        Uri.parse('https://www.facebook.com/reels/create/'),
+      (_SocialNetwork.facebook, _WebShareMode.story) =>
+        Uri.parse('https://www.facebook.com/stories/create/'),
+      (_SocialNetwork.facebook, _WebShareMode.message) =>
+        Uri.parse('https://www.messenger.com/'),
+      (_SocialNetwork.x, _) => Uri.parse('https://x.com/compose/post'),
+      (_SocialNetwork.linkedin, _WebShareMode.post) =>
+        Uri.parse('https://www.linkedin.com/feed/'),
+      (_SocialNetwork.linkedin, _WebShareMode.message) =>
+        Uri.parse('https://www.linkedin.com/messaging/'),
+      (_SocialNetwork.pinterest, _WebShareMode.pin) =>
+        Uri.parse('https://www.pinterest.com/pin-builder/'),
+      (_SocialNetwork.pinterest, _WebShareMode.message) =>
+        Uri.parse('https://www.pinterest.com/messages/'),
+      _ => Uri.parse(_webUrl),
+    };
   }
 
   Future<void> _copyVerse() async {
@@ -1529,6 +2248,56 @@ class _VerseHomePageState extends State<VerseHomePage> {
               );
             }).toList(),
           ),
+          const SizedBox(height: 20),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFF2E7CF), Color(0xFFE5F3EA)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(
+                color: const Color(0xFF6EA18F).withOpacity(0.32),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'También puedes consultar el versículo del día.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13.6,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF234548),
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                FilledButton.icon(
+                  onPressed: _showVerseOfDay,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B7F6D),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.wb_sunny_rounded),
+                  label: Text(
+                    'Versículo del día',
+                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1708,6 +2477,27 @@ class _VerseHomePageState extends State<VerseHomePage> {
                 ),
               ),
               OutlinedButton.icon(
+                onPressed: _downloadVersePdf,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF6A4F1E),
+                  side: BorderSide(
+                    color: const Color(0xFF6A4F1E).withOpacity(0.35),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.picture_as_pdf_rounded),
+                label: Text(
+                  'Descargar PDF',
+                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                ),
+              ),
+              OutlinedButton.icon(
                 onPressed: _shareApp,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF1A5963),
@@ -1857,6 +2647,18 @@ class _SoftPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _WebShareMode {
+  post('Publicación', 'Abrir para publicar en el feed.'),
+  reel('Reel', 'Abrir para subir como reel.'),
+  story('Historia', 'Abrir para subir como historia.'),
+  message('Mensaje', 'Abrir para enviar por mensaje.'),
+  pin('Pin', 'Abrir para crear un pin.');
+
+  const _WebShareMode(this.label, this.description);
+  final String label;
+  final String description;
 }
 
 enum _SocialNetwork {

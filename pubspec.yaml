@@ -11,12 +11,17 @@ dependencies:
     sdk: flutter
   cross_file: ^0.3.4+2
   cupertino_icons: ^1.0.8
+  flutter_local_notifications: ^17.2.4
+  flutter_timezone: ^2.1.0
   flutter_tts: ^4.2.3
   font_awesome_flutter: 10.7.0
   google_fonts: ^6.2.1
   http: ^1.2.2
+  pdf: ^3.11.3
   share_plus: ^10.1.4
+  shared_preferences: ^2.3.3
   speech_to_text: ^7.3.0
+  timezone: ^0.9.4
   url_launcher: ^6.3.1
 
 dev_dependencies:

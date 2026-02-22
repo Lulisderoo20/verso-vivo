@@ -6,7 +6,7 @@ void main() {
     await tester.pumpWidget(const VersoVivoApp());
 
     expect(
-      find.text('Sobre que quieres que trate el versiculo de hoy?'),
+      find.text('¿Sobre qué quieres que trate el versículo de hoy?'),
       findsOneWidget,
     );
     expect(find.text('VersoVivo'), findsOneWidget);
