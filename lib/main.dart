@@ -1739,56 +1739,81 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return availableModes.first;
     }
 
-    return showModalBottomSheet<_WebShareMode>(
+    return showDialog<_WebShareMode>(
       context: context,
-      showDragHandle: true,
-      backgroundColor: const Color(0xFFFFFCF7),
-      builder: (modalContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-                  child: Text(
-                    '¿Cómo quieres compartir en ${network.label}?',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF264246),
-                    ),
-                  ),
-                ),
-                ...availableModes.map(
-                  (mode) => ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    title: Text(
-                      mode.label,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final screenSize = MediaQuery.of(dialogContext).size;
+        return Dialog(
+          backgroundColor: const Color(0xFFFFFCF7),
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: screenSize.width < 620 ? 14 : 24,
+            vertical: 24,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 520,
+              maxHeight: screenSize.height * 0.76,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: Text(
+                      '¿Cómo quieres compartir en ${network.label}?',
                       style: GoogleFonts.manrope(
-                        fontSize: 14.5,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: const Color(0xFF264246),
                       ),
                     ),
-                    subtitle: Text(
-                      mode.description,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12.5,
-                        color: const Color(0xFF516769),
+                  ),
+                  const Divider(height: 1),
+                  const SizedBox(height: 4),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: availableModes
+                            .map(
+                              (mode) => ListTile(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                title: Text(
+                                  mode.label,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF264246),
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  mode.description,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 12.5,
+                                    color: const Color(0xFF516769),
+                                  ),
+                                ),
+                                trailing: const Icon(Icons.chevron_right_rounded),
+                                onTap: () {
+                                  Navigator.of(dialogContext).pop(mode);
+                                },
+                              ),
+                            )
+                            .toList(),
                       ),
                     ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () {
-                      Navigator.of(modalContext).pop(mode);
-                    },
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1926,36 +1951,57 @@ class _VerseHomePageState extends State<VerseHomePage> {
               ),
             ),
             SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 26),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1180),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide = constraints.maxWidth > 980;
-                        if (isWide) {
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(child: _buildInputPanel()),
-                              const SizedBox(width: 18),
-                              Expanded(child: _buildVersePanel()),
-                            ],
-                          );
-                        }
+              child: LayoutBuilder(
+                builder: (context, viewportConstraints) {
+                  final isWide = viewportConstraints.maxWidth > 980;
+                  final compactLayout = viewportConstraints.maxHeight < 940;
 
-                        return Column(
-                          children: [
-                            _buildInputPanel(),
-                            const SizedBox(height: 14),
-                            _buildVersePanel(),
-                          ],
-                        );
-                      },
+                  return Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isWide ? 18 : 12,
+                      isWide ? 14 : 10,
+                      isWide ? 18 : 12,
+                      isWide ? 16 : 10,
                     ),
-                  ),
-                ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1180),
+                        child: isWide
+                            ? Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: _buildInputPanel(
+                                      compact: compactLayout,
+                                      scrollable: true,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: _buildVersePanel(scrollable: true),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  Expanded(
+                                    flex: 6,
+                                    child: _buildInputPanel(
+                                      compact: true,
+                                      scrollable: true,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Expanded(
+                                    flex: 4,
+                                    child: _buildVersePanel(scrollable: true),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             if (_showWelcomeOverlay) Positioned.fill(child: _buildWelcomeOverlay()),
@@ -2034,203 +2080,216 @@ class _VerseHomePageState extends State<VerseHomePage> {
     );
   }
 
-  Widget _buildInputPanel() {
+  Widget _buildInputPanel({
+    bool compact = false,
+    bool scrollable = false,
+  }) {
     final textStyle = GoogleFonts.manrope(
-      fontSize: 15,
-      height: 1.4,
+      fontSize: compact ? 14 : 15,
+      height: 1.36,
       fontWeight: FontWeight.w500,
       color: const Color(0xFF334040),
     );
 
-    return _SoftPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: const Color(0xFF1B7F6D).withOpacity(0.10),
-              border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.25)),
-            ),
-            child: Text(
-              'VersoVivo • Versículo diario',
-              style: GoogleFonts.manrope(
-                fontSize: 12,
-                letterSpacing: 0.2,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF145F50),
-              ),
-            ),
+    final panelContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: const Color(0xFF1B7F6D).withOpacity(0.10),
+            border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.25)),
           ),
-          const SizedBox(height: 18),
-          Text(
-            _appName,
-            style: GoogleFonts.playfairDisplay(
-              fontSize: 68,
+          child: Text(
+            'VersoVivo • Versículo diario',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              letterSpacing: 0.2,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF163437),
-              height: 0.9,
+              color: const Color(0xFF145F50),
             ),
           ),
-          const SizedBox(height: 12),
-          Text(
-            'Un espacio diario para respirar, escuchar y compartir un versículo con sentido.',
-            style: textStyle,
+        ),
+        SizedBox(height: compact ? 12 : 18),
+        Text(
+          _appName,
+          style: GoogleFonts.playfairDisplay(
+            fontSize: compact ? 52 : 68,
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF163437),
+            height: 0.9,
           ),
-          const SizedBox(height: 24),
-          Text(
-            _question,
-            style: GoogleFonts.playfairDisplay(
-              fontSize: 36,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF102327),
-              height: 1.0,
-            ),
+        ),
+        SizedBox(height: compact ? 8 : 12),
+        Text(
+          'Un espacio diario para respirar, escuchar y compartir un versículo con sentido.',
+          style: textStyle,
+        ),
+        SizedBox(height: compact ? 16 : 24),
+        Text(
+          _question,
+          style: GoogleFonts.playfairDisplay(
+            fontSize: compact ? 30 : 36,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF102327),
+            height: 1.0,
           ),
-          const SizedBox(height: 14),
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              color: const Color(0xFFFFFFFF).withOpacity(0.72),
-              border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.20)),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: const Color(0xFFFFFFFF).withOpacity(0.72),
+            border: Border.all(color: const Color(0xFF1B7F6D).withOpacity(0.20)),
+          ),
+          child: TextField(
+            controller: _topicController,
+            maxLines: compact ? 2 : 3,
+            minLines: compact ? 1 : 2,
+            textInputAction: TextInputAction.done,
+            onChanged: _handleTopicChanged,
+            onSubmitted: (_) => _buildVerseForTopic(),
+            style: GoogleFonts.manrope(
+              fontSize: 16,
+              height: 1.3,
+              color: const Color(0xFF132023),
             ),
-            child: TextField(
-              controller: _topicController,
-              maxLines: 3,
-              minLines: 2,
-              textInputAction: TextInputAction.done,
-              onChanged: _handleTopicChanged,
-              onSubmitted: (_) => _buildVerseForTopic(),
-              style: GoogleFonts.manrope(
-                fontSize: 16,
-                height: 1.3,
-                color: const Color(0xFF132023),
+            decoration: InputDecoration(
+              hintText: 'Ejemplo: ansiedad, trabajo, familia, paz, salud...',
+              hintStyle: GoogleFonts.manrope(
+                color: const Color(0xFF4D5A5B).withOpacity(0.72),
+                fontSize: 15,
               ),
-              decoration: InputDecoration(
-                hintText: 'Ejemplo: ansiedad, trabajo, familia, paz, salud...',
-                hintStyle: GoogleFonts.manrope(
-                  color: const Color(0xFF4D5A5B).withOpacity(0.72),
-                  fontSize: 15,
-                ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.fromLTRB(
+                18,
+                compact ? 13 : 16,
+                18,
+                compact ? 13 : 16,
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+        ),
+        const SizedBox(height: 12),
+        _buildVerseOfDayPromptCard(compact: compact),
+        const SizedBox(height: 12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: _isListening
+                ? const Color(0xFFFFF3DE)
+                : const Color(0xFFF3F7F4),
+            border: Border.all(
               color: _isListening
-                  ? const Color(0xFFFFF3DE)
-                  : const Color(0xFFF3F7F4),
-              border: Border.all(
-                color: _isListening
-                    ? const Color(0xFFB28A39).withOpacity(0.35)
-                    : const Color(0xFF1B7F6D).withOpacity(0.2),
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  _isListening ? Icons.graphic_eq : Icons.info_outline_rounded,
-                  size: 18,
-                  color: _isListening
-                      ? const Color(0xFF9A752F)
-                      : const Color(0xFF2D5D58),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _voiceStatus,
-                    style: GoogleFonts.manrope(
-                      fontSize: 13.5,
-                      height: 1.35,
-                      color: const Color(0xFF2A3838),
-                    ),
-                  ),
-                ),
-              ],
+                  ? const Color(0xFFB28A39).withOpacity(0.35)
+                  : const Color(0xFF1B7F6D).withOpacity(0.2),
             ),
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 9,
-            runSpacing: 9,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FilledButton(
-                onPressed: _buildVerseForTopic,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF1B7F6D),
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  textStyle: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                child: const Text('Buscar versículo'),
+              Icon(
+                _isListening ? Icons.graphic_eq : Icons.info_outline_rounded,
+                size: 18,
+                color: _isListening
+                    ? const Color(0xFF9A752F)
+                    : const Color(0xFF2D5D58),
               ),
-              OutlinedButton.icon(
-                onPressed: _toggleListening,
-                icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
-                label: Text(_isListening ? 'Detener micrófono' : 'Hablar'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF1B4E58),
-                  side: BorderSide(color: const Color(0xFF1B4E58).withOpacity(0.35)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  textStyle: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _isSpeaking ? _stopSpeaking : _speakSelectedVerse,
-                icon: Icon(_isSpeaking ? Icons.stop_circle : Icons.volume_up),
-                label: Text(_isSpeaking ? 'Detener voz' : 'Escuchar'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF6D4F1E),
-                  side: BorderSide(color: const Color(0xFF6D4F1E).withOpacity(0.30)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  textStyle: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _voiceStatus,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13.5,
+                    height: 1.35,
+                    color: const Color(0xFF2A3838),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 22),
-          Text(
-            'Temas rápidos',
-            style: GoogleFonts.manrope(
-              color: const Color(0xFF2E3F42),
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
+        ),
+        SizedBox(height: compact ? 12 : 16),
+        Wrap(
+          spacing: 9,
+          runSpacing: 9,
+          children: [
+            FilledButton(
+              onPressed: _buildVerseForTopic,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1B7F6D),
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                textStyle: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              child: const Text('Buscar versículo'),
             ),
+            OutlinedButton.icon(
+              onPressed: _toggleListening,
+              icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
+              label: Text(_isListening ? 'Detener micrófono' : 'Hablar'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1B4E58),
+                side: BorderSide(color: const Color(0xFF1B4E58).withOpacity(0.35)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                textStyle: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _isSpeaking ? _stopSpeaking : _speakSelectedVerse,
+              icon: Icon(_isSpeaking ? Icons.stop_circle : Icons.volume_up),
+              label: Text(_isSpeaking ? 'Detener voz' : 'Escuchar'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF6D4F1E),
+                side: BorderSide(color: const Color(0xFF6D4F1E).withOpacity(0.30)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                textStyle: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: compact ? 14 : 18),
+        Text(
+          'Temas rápidos',
+          style: GoogleFonts.manrope(
+            color: const Color(0xFF2E3F42),
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
           ),
-          const SizedBox(height: 9),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _quickTopics.map((topic) {
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 40,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _quickTopics.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final topic = _quickTopics[index];
               return ActionChip(
                 label: Text(topic),
                 labelStyle: GoogleFonts.manrope(
@@ -2246,73 +2305,123 @@ class _VerseHomePageState extends State<VerseHomePage> {
                   );
                 },
               );
-            }).toList(),
+            },
           ),
-          const SizedBox(height: 20),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: const LinearGradient(
-                colors: [Color(0xFFF2E7CF), Color(0xFFE5F3EA)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(
-                color: const Color(0xFF6EA18F).withOpacity(0.32),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+      ],
+    );
+
+    return _SoftPanel(
+      child: scrollable
+          ? SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: panelContent,
+            )
+          : panelContent,
+    );
+  }
+
+  Widget _buildVerseOfDayPromptCard({required bool compact}) {
+    final button = FilledButton.icon(
+      onPressed: _showVerseOfDay,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF1B7F6D),
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 14,
+          vertical: compact ? 11 : 12,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.wb_sunny_rounded),
+      label: Text(
+        'Versículo del día',
+        style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+      ),
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+        compact ? 12 : 14,
+        compact ? 12 : 14,
+        compact ? 12 : 14,
+        compact ? 11 : 12,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF2E7CF), Color(0xFFE5F3EA)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: const Color(0xFF6EA18F).withOpacity(0.32),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final horizontalLayout = constraints.maxWidth > 430;
+          if (horizontalLayout) {
+            return Row(
               children: [
-                Text(
-                  'También puedes consultar el versículo del día.',
-                  style: GoogleFonts.manrope(
-                    fontSize: 13.6,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF234548),
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                FilledButton.icon(
-                  onPressed: _showVerseOfDay,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF1B7F6D),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                Expanded(
+                  child: Text(
+                    'También puedes consultar el versículo del día.',
+                    style: GoogleFonts.manrope(
+                      fontSize: compact ? 13.2 : 13.6,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF234548),
+                      height: 1.3,
                     ),
                   ),
-                  icon: const Icon(Icons.wb_sunny_rounded),
-                  label: Text(
-                    'Versículo del día',
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
-                  ),
                 ),
+                const SizedBox(width: 12),
+                button,
               ],
-            ),
-          ),
-        ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'También puedes consultar el versículo del día.',
+                style: GoogleFonts.manrope(
+                  fontSize: compact ? 13.2 : 13.6,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF234548),
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              button,
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildVersePanel() {
+  Widget _buildVersePanel({bool scrollable = false}) {
+    final panelContent = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 420),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: _selectedVerse == null
+          ? _buildEmptyVerseState()
+          : _buildGeneratedVerseState(_selectedVerse!),
+    );
+
     return _SoftPanel(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 420),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        child: _selectedVerse == null
-            ? _buildEmptyVerseState()
-            : _buildGeneratedVerseState(_selectedVerse!),
-      ),
+      child: scrollable
+          ? SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: panelContent,
+            )
+          : panelContent,
     );
   }
 
