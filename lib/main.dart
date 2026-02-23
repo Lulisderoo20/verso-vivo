@@ -97,6 +97,12 @@ class _VerseHomePageState extends State<VerseHomePage> {
   final FlutterTts _flutterTts = FlutterTts();
   final Random _random = Random();
   final Set<String> _seenVerseReferences = <String>{};
+  final ScrollController _inputPanelScrollController = ScrollController();
+  final ScrollController _versePanelScrollController = ScrollController();
+  final FocusNode _inputPanelFocusNode =
+      FocusNode(debugLabel: 'input_panel_scroll');
+  final FocusNode _versePanelFocusNode =
+      FocusNode(debugLabel: 'verse_panel_scroll');
 
   VerseCardData? _selectedVerse;
   String _voiceStatus = 'Escribe o usa el micrófono para contar tu tema.';
@@ -1501,7 +1507,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
       _paintShareText(
         canvas: canvas,
         text: 'Tema: $_lastTopic',
-        offset: const Offset(120, 965),
+        offset: const Offset(120, 945),
         maxWidth: 840,
         style: TextStyle(
           fontFamily: bodyFontFamily,
@@ -1523,7 +1529,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     );
     _paintShareText(
       canvas: canvas,
-      text: 'Diseño premium de fe para compartir en tus redes.',
+      text: 'Versículo de fe para compartir en tus redes.',
       offset: const Offset(104, 1120),
       maxWidth: 880,
       style: TextStyle(
@@ -1739,56 +1745,74 @@ class _VerseHomePageState extends State<VerseHomePage> {
       return availableModes.first;
     }
 
-    return showModalBottomSheet<_WebShareMode>(
+    return showDialog<_WebShareMode>(
       context: context,
-      showDragHandle: true,
-      backgroundColor: const Color(0xFFFFFCF7),
-      builder: (modalContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-                  child: Text(
-                    '¿Cómo quieres compartir en ${network.label}?',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF264246),
-                    ),
-                  ),
-                ),
-                ...availableModes.map(
-                  (mode) => ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    title: Text(
-                      mode.label,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: const Color(0xFFFFFCF7),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 520),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: Text(
+                      '¿Cómo quieres compartir en ${network.label}?',
                       style: GoogleFonts.manrope(
-                        fontSize: 14.5,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: const Color(0xFF264246),
                       ),
                     ),
-                    subtitle: Text(
-                      mode.description,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12.5,
-                        color: const Color(0xFF516769),
+                  ),
+                  const Divider(height: 1),
+                  const SizedBox(height: 4),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: availableModes
+                            .map(
+                              (mode) => ListTile(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                title: Text(
+                                  mode.label,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF264246),
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  mode.description,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 12.5,
+                                    color: const Color(0xFF516769),
+                                  ),
+                                ),
+                                trailing: const Icon(Icons.chevron_right_rounded),
+                                onTap: () {
+                                  Navigator.of(dialogContext).pop(mode);
+                                },
+                              ),
+                            )
+                            .toList(),
                       ),
                     ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () {
-                      Navigator.of(modalContext).pop(mode);
-                    },
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1876,9 +1900,153 @@ class _VerseHomePageState extends State<VerseHomePage> {
     messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _requestVersePanelFocus() {
+    if (_versePanelFocusNode.hasFocus) {
+      return;
+    }
+    _versePanelFocusNode.requestFocus();
+  }
+
+  void _requestInputPanelFocus() {
+    if (_inputPanelFocusNode.hasFocus) {
+      return;
+    }
+    _inputPanelFocusNode.requestFocus();
+  }
+
+  KeyEventResult _handleVersePanelKeyEvent(
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent || !_versePanelScrollController.hasClients) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _scrollVersePanelBy(96);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _scrollVersePanelBy(-96);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.pageDown) {
+      _scrollVersePanelBy(320);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.pageUp) {
+      _scrollVersePanelBy(-320);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.home) {
+      _scrollVersePanelTo(0);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.end) {
+      _scrollVersePanelTo(_versePanelScrollController.position.maxScrollExtent);
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handleInputPanelKeyEvent(
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent || !_inputPanelScrollController.hasClients) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _scrollInputPanelBy(96);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _scrollInputPanelBy(-96);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.pageDown) {
+      _scrollInputPanelBy(320);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.pageUp) {
+      _scrollInputPanelBy(-320);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.home) {
+      _scrollInputPanelTo(0);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.end) {
+      _scrollInputPanelTo(_inputPanelScrollController.position.maxScrollExtent);
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  Future<void> _scrollVersePanelBy(double delta) async {
+    if (!_versePanelScrollController.hasClients) {
+      return;
+    }
+
+    final currentOffset = _versePanelScrollController.offset;
+    await _scrollVersePanelTo(currentOffset + delta);
+  }
+
+  Future<void> _scrollVersePanelTo(double offset) async {
+    if (!_versePanelScrollController.hasClients) {
+      return;
+    }
+
+    final maxOffset = _versePanelScrollController.position.maxScrollExtent;
+    final targetOffset = offset.clamp(0, maxOffset).toDouble();
+    if ((targetOffset - _versePanelScrollController.offset).abs() < 0.5) {
+      return;
+    }
+
+    await _versePanelScrollController.animateTo(
+      targetOffset,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _scrollInputPanelBy(double delta) async {
+    if (!_inputPanelScrollController.hasClients) {
+      return;
+    }
+
+    final currentOffset = _inputPanelScrollController.offset;
+    await _scrollInputPanelTo(currentOffset + delta);
+  }
+
+  Future<void> _scrollInputPanelTo(double offset) async {
+    if (!_inputPanelScrollController.hasClients) {
+      return;
+    }
+
+    final maxOffset = _inputPanelScrollController.position.maxScrollExtent;
+    final targetOffset = offset.clamp(0, maxOffset).toDouble();
+    if ((targetOffset - _inputPanelScrollController.offset).abs() < 0.5) {
+      return;
+    }
+
+    await _inputPanelScrollController.animateTo(
+      targetOffset,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   void dispose() {
     _topicController.dispose();
+    _inputPanelScrollController.dispose();
+    _versePanelScrollController.dispose();
+    _inputPanelFocusNode.dispose();
+    _versePanelFocusNode.dispose();
     _speechToText.cancel();
     _flutterTts.stop();
     super.dispose();
@@ -1926,8 +2094,8 @@ class _VerseHomePageState extends State<VerseHomePage> {
               ),
             ),
             SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 26),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 1180),
@@ -1936,10 +2104,10 @@ class _VerseHomePageState extends State<VerseHomePage> {
                         final isWide = constraints.maxWidth > 980;
                         if (isWide) {
                           return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Expanded(child: _buildInputPanel()),
-                              const SizedBox(width: 18),
+                              const SizedBox(width: 14),
                               Expanded(child: _buildVersePanel()),
                             ],
                           );
@@ -1947,9 +2115,9 @@ class _VerseHomePageState extends State<VerseHomePage> {
 
                         return Column(
                           children: [
-                            _buildInputPanel(),
-                            const SizedBox(height: 14),
-                            _buildVersePanel(),
+                            Expanded(child: _buildInputPanel()),
+                            const SizedBox(height: 10),
+                            Expanded(child: _buildVersePanel()),
                           ],
                         );
                       },
@@ -2043,9 +2211,21 @@ class _VerseHomePageState extends State<VerseHomePage> {
     );
 
     return _SoftPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _requestInputPanelFocus,
+        child: Focus(
+          focusNode: _inputPanelFocusNode,
+          onKeyEvent: _handleInputPanelKeyEvent,
+          child: Scrollbar(
+            controller: _inputPanelScrollController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _inputPanelScrollController,
+              physics: const ClampingScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -2118,6 +2298,8 @@ class _VerseHomePageState extends State<VerseHomePage> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          _buildVerseOfDayCard(),
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
@@ -2248,70 +2430,115 @@ class _VerseHomePageState extends State<VerseHomePage> {
               );
             }).toList(),
           ),
-          const SizedBox(height: 20),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: const LinearGradient(
-                colors: [Color(0xFFF2E7CF), Color(0xFFE5F3EA)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                ],
               ),
-              border: Border.all(
-                color: const Color(0xFF6EA18F).withOpacity(0.32),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'También puedes consultar el versículo del día.',
-                  style: GoogleFonts.manrope(
-                    fontSize: 13.6,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF234548),
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                FilledButton.icon(
-                  onPressed: _showVerseOfDay,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF1B7F6D),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.wb_sunny_rounded),
-                  label: Text(
-                    'Versículo del día',
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
             ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVerseOfDayCard() {
+    final actionButton = FilledButton.icon(
+      onPressed: _showVerseOfDay,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF1B7F6D),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.wb_sunny_rounded),
+      label: Text(
+        'Versículo del día',
+        style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+      ),
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF2E7CF), Color(0xFFE5F3EA)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: const Color(0xFF6EA18F).withOpacity(0.32),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 430) {
+            return Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'También puedes consultar el versículo del día.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13.6,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF234548),
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                actionButton,
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'También puedes consultar el versículo del día.',
+                style: GoogleFonts.manrope(
+                  fontSize: 13.6,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF234548),
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              actionButton,
+            ],
+          );
+        },
       ),
     );
   }
 
   Widget _buildVersePanel() {
     return _SoftPanel(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 420),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        child: _selectedVerse == null
-            ? _buildEmptyVerseState()
-            : _buildGeneratedVerseState(_selectedVerse!),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _requestVersePanelFocus,
+        child: Focus(
+          focusNode: _versePanelFocusNode,
+          onKeyEvent: _handleVersePanelKeyEvent,
+          child: Scrollbar(
+            controller: _versePanelScrollController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _versePanelScrollController,
+              physics: const ClampingScrollPhysics(),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 420),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: _selectedVerse == null
+                    ? _buildEmptyVerseState()
+                    : _buildGeneratedVerseState(_selectedVerse!),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
