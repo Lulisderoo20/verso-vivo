@@ -12,8 +12,6 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
@@ -1213,7 +1211,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
     await _shareVerseAsImage(verse);
   }
 
-  Future<void> _downloadVersePdf() async {
+  Future<void> _downloadVersePng() async {
     final verse = _selectedVerse;
     if (verse == null) {
       _showSnackBar('Genera un versículo antes de descargar.');
@@ -1221,29 +1219,33 @@ class _VerseHomePageState extends State<VerseHomePage> {
     }
 
     try {
-      final pdfBytes = await _buildVerseSharePdfBytes(verse);
-      final fileName = _buildVerseFileName(verse: verse, extension: 'pdf');
+      final imageBytes = await _buildVerseShareImageBytes(verse);
+      if (imageBytes == null || imageBytes.isEmpty) {
+        throw Exception('No se pudo generar la imagen del versículo.');
+      }
+      final fileName = _buildVerseFileName(verse: verse, extension: 'png');
 
       if (_downloadBytesOnWeb(
-        bytes: pdfBytes,
-        mimeType: 'application/pdf',
+        bytes: imageBytes,
+        mimeType: 'image/png',
         fileName: fileName,
       )) {
-        _showSnackBar('PDF descargado en tu dispositivo.');
+        _showSnackBar('PNG descargado en tu dispositivo.');
         return;
       }
 
-      final pdfFile = XFile.fromData(
-        pdfBytes,
-        mimeType: 'application/pdf',
+      final imageFile = XFile.fromData(
+        imageBytes,
+        mimeType: 'image/png',
         name: fileName,
       );
       await Share.shareXFiles(
-        [pdfFile],
+        [imageFile],
         subject: 'Versículo diario en $_appName',
       );
+      _showSnackBar('Se abrió compartir para guardar o enviar el PNG.');
     } catch (_) {
-      _showSnackBar('No pude generar el PDF del versículo.');
+      _showSnackBar('No pude generar el PNG del versículo.');
     }
   }
 
@@ -1308,34 +1310,6 @@ class _VerseHomePageState extends State<VerseHomePage> {
         ? 'versiculo'
         : normalizedReference;
     return 'versovivo-$referencePart.$extension';
-  }
-
-  Future<Uint8List> _buildVerseSharePdfBytes(VerseCardData verse) async {
-    final imageBytes = await _buildVerseShareImageBytes(verse);
-    if (imageBytes == null || imageBytes.isEmpty) {
-      throw Exception('No se pudo generar la imagen para el PDF.');
-    }
-
-    final document = pw.Document(
-      title: 'Versículo en $_appName',
-      author: _appName,
-      creator: _appName,
-    );
-    final verseImage = pw.MemoryImage(imageBytes);
-
-    document.addPage(
-      pw.Page(
-        pageFormat: const PdfPageFormat(1080, 1350, marginAll: 0),
-        margin: pw.EdgeInsets.zero,
-        build: (context) {
-          return pw.SizedBox.expand(
-            child: pw.Image(verseImage, fit: pw.BoxFit.cover),
-          );
-        },
-      ),
-    );
-
-    return document.save();
   }
 
   Future<void> _shareApp() async {
@@ -1551,6 +1525,19 @@ class _VerseHomePageState extends State<VerseHomePage> {
         fontSize: 24,
         fontWeight: FontWeight.w600,
         color: const Color(0xFFEDE4D5),
+      ),
+      maxLines: 1,
+    );
+    _paintShareText(
+      canvas: canvas,
+      text: 'Lucia Lisdero ©',
+      offset: const Offset(794, 1272),
+      maxWidth: 200,
+      style: TextStyle(
+        fontFamily: bodyFontFamily,
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        color: const Color(0xFFD8CDBA),
       ),
       maxLines: 1,
     );
@@ -2733,7 +2720,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: _downloadVersePdf,
+                onPressed: _downloadVersePng,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF6A4F1E),
                   side: BorderSide(
@@ -2747,9 +2734,9 @@ class _VerseHomePageState extends State<VerseHomePage> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                icon: const Icon(Icons.picture_as_pdf_rounded),
+                icon: const Icon(Icons.image_outlined),
                 label: Text(
-                  'Descargar PDF',
+                  'Descargar PNG',
                   style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
                 ),
               ),
