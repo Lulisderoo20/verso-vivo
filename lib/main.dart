@@ -2095,7 +2095,7 @@ class _VerseHomePageState extends State<VerseHomePage> {
             ),
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 34),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 1180),
@@ -2126,8 +2126,37 @@ class _VerseHomePageState extends State<VerseHomePage> {
                 ),
               ),
             ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 8,
+              child: _buildCopyrightFooter(),
+            ),
             if (_showWelcomeOverlay) Positioned.fill(child: _buildWelcomeOverlay()),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCopyrightFooter() {
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF102327).withOpacity(0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            'Lucia Lisdero ©',
+            style: GoogleFonts.manrope(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF2D5250),
+              letterSpacing: 0.2,
+            ),
+          ),
         ),
       ),
     );
